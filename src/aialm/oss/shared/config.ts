@@ -44,6 +44,11 @@ export interface GithubConfig {
   token: string;
 }
 
+/**
+ * Token for GitHub REST API (issues read, PR create).
+ * Repo content operations (clone/branch/commit/push) use plain `git` over SSH —
+ * no token involved. Set GITHUB_TOKEN only when the pipeline talks to the REST API.
+ */
 export function githubConfig(): GithubConfig {
   loadDotEnv();
   return { token: requireEnv('GITHUB_TOKEN') };
