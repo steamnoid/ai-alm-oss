@@ -41,17 +41,17 @@ export function jiraConfig(): JiraConfig {
 }
 
 export interface GithubConfig {
-  token: string;
+  token: string; // may be empty — unauthenticated public-repo reads (60 req/h)
 }
 
 /**
  * Token for GitHub REST API (issues read, PR create).
  * Repo content operations (clone/branch/commit/push) use plain `git` over SSH —
- * no token involved. Set GITHUB_TOKEN only when the pipeline talks to the REST API.
+ * no token involved. Without GITHUB_TOKEN, public reads work unauthenticated.
  */
 export function githubConfig(): GithubConfig {
   loadDotEnv();
-  return { token: requireEnv('GITHUB_TOKEN') };
+  return { token: process.env.GITHUB_TOKEN?.trim() ?? '' };
 }
 
 export function hasGithubConfig(): boolean {

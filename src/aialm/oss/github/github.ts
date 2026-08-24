@@ -20,6 +20,7 @@ export interface RepoInfo {
   default_branch: string;
   fork: boolean;
   html_url: string;
+  language?: string | null;
 }
 
 export interface IssueRef {
@@ -54,15 +55,17 @@ export class GithubClient {
     body?: unknown,
     accept = 'application/vnd.github+json',
   ): Promise<{ status: number; data: T }> {
+    const headers: Record<string, string> = {
+      Accept: accept,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'ai-alm-oss',
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    };
+    // Unauthenticated reads work for public repos (60 req/h limit); token required for writes.
+    if (this.token) headers.Authorization = `Bearer ${this.token}`;
     const res = await this.f(`${GithubClient.API}${path}`, {
       method,
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        Accept: accept,
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'ai-alm-oss',
-        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      },
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     const text = await res.text();
@@ -120,6 +123,14 @@ export class GithubClient {
       if (e instanceof GithubError && e.status === 404) return null;
       throw e;
     }
+  }
+
+  /** List immediate children (file names) of a directory path; throws 404 if missing. */
+  async listDir(owner: string, repo: string, path: string): Promise<string[]> {
+    const r = await this.req('GET', `/repos/${owner}/${repo}/contents/${encodeURI(path)}`);
+    const list = r.data as any[];
+    if (!Array.isArray(list)) throw new GithubError(200, path, 'not a directory');
+    return list.filter(x => x.type === 'file').map((x: any) => x.name as string);
   }
 
   async fork(owner: string, repo: string): Promise<RepoInfo> {
