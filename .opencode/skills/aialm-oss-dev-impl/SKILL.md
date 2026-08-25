@@ -71,3 +71,4 @@ work items, open PRs.
 
 ## V1.2 — fork feature branch
 Write feature code on the FORK feature branch (`branchForWave`), after `syncFork`; push via `httpsPushUrl`. NEVER touch upstream main. Agent performs repo writes; helpers plan/classify (HOOK/AC slices).
+Each wave works in its own isolated fork clone (`cloneWave` → `.work/<waveKey>/`) so parallel waves never share a working copy.

@@ -44,3 +44,27 @@ export function syncForkCommands(input: { upstream: string; forkRemote: string; 
     `git push ${forkRemote} ${branch}`,
   ];
 }
+
+/** Per-wave isolated working directory under `.work/<workKey>`. */
+export function waveWorkdir(workKey: string): string {
+  return `.work/${workKey}`;
+}
+
+/**
+ * Isolate one wave in its own fork clone so parallel waves never share a working
+ * copy. Returns the workdir + shell commands (clone fork, add upstream, sync the
+ * feature branch). `forkRepo` is a push-able URL (token-embedded HTTPS or SSH).
+ */
+export function cloneWave(input: { upstream: string; forkRepo: string; base: string; branch: string; workKey: string }): { dir: string; commands: string[] } {
+  const dir = waveWorkdir(input.workKey);
+  const prefix = `cd ${dir} && `;
+  const sync = syncForkCommands({ upstream: input.upstream, forkRemote: 'origin', base: input.base, branch: input.branch });
+  return {
+    dir,
+    commands: [
+      `rm -rf ${dir}`,
+      `git clone ${input.forkRepo} ${dir}`,
+      ...sync.map(c => prefix + c),
+    ],
+  };
+}

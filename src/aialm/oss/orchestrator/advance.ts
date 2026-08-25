@@ -201,12 +201,23 @@ export interface AdvanceResult {
 
 export type GenerativeRunner = (a: Extract<OrchestratorAction, { kind: 'GENERATE' }>) => Promise<string>;
 
+function workerPool<T>(items: T[], workers: number, fn: (item: T) => Promise<void>): Promise<void> {
+  const queue = [...items];
+  const runners = Array.from({ length: Math.min(workers, queue.length) || 1 }, async () => {
+    while (queue.length) {
+      const item = queue.shift()!;
+      await fn(item);
+    }
+  });
+  return Promise.all(runners).then(() => undefined);
+}
+
 /** One poll pass: read the delta via the `updated`-cursor and advance each changed issue. */
 export async function advance(
   jira: JiraClient,
-  input: { projectKey: string; dry?: boolean; runGenerative?: GenerativeRunner; cursorOverride?: string },
+  input: { projectKey: string; dry?: boolean; runGenerative?: GenerativeRunner; cursorOverride?: string; workers?: number },
 ): Promise<AdvanceResult> {
-  const { projectKey, dry = false, runGenerative } = input;
+  const { projectKey, dry = false, runGenerative, workers = 4 } = input;
   const state = loadState(projectKey);
   const cursor = input.cursorOverride ?? state.cursor ?? '';
   const jql = `project = ${projectKey} AND updated >= "${cursor || '1970-01-01 00:00 +0000'}" ORDER BY updated ASC`;
@@ -214,23 +225,40 @@ export async function advance(
   const actions: AdvanceResult['actions'] = [];
   let maxUpdated = cursor;
 
+  // Resolve every changed issue's next action (independent, reads-only; fault-isolated).
+  const resolved: { key: string; action: OrchestratorAction }[] = [];
+  const resolveErrors: { key: string; detail: string }[] = [];
   for (const it of issues) {
     const key = it.key as string;
+    const updated = ((it.fields as { updated?: string })?.updated ?? '') as string;
+    if (updated && updated > maxUpdated) maxUpdated = updated;
     try {
       const action = await resolveNext(jira, { projectKey, issueKey: key });
-      if (action.kind === 'NONE') continue;
+      resolved.push({ key, action });
+    } catch (e) {
+      resolveErrors.push({ key, detail: (e as Error).message });
+    }
+  }
+
+  // Execute concurrently (bounded). Different issues → different work items/branches.
+  const results: { key: string; action: string; detail: string }[] = [];
+  for (const r of resolveErrors) results.push({ key: r.key, action: 'ERROR', detail: r.detail });
+  await workerPool(resolved, workers, async ({ key, action }) => {
+    try {
+      if (action.kind === 'NONE') return;
       let detail = '';
       if (action.kind === 'WAIT') detail = `wait:${action.reason}`;
       else if (action.kind === 'APPLY') detail = await applyDeterministic(jira, action, dry);
       else detail = runGenerative ? await runGenerative(action) : dry ? `dry:${action.skill}:${action.targetKey}` : `skip-generative:${action.skill}`;
-      actions.push({ key, action: action.kind, detail });
+      results.push({ key, action: action.kind, detail });
       state.consumed.push(`${key}:${action.kind}:${detail}`);
     } catch (e) {
-      actions.push({ key, action: 'ERROR', detail: (e as Error).message });
+      results.push({ key, action: 'ERROR', detail: (e as Error).message });
     }
-    const updated = ((it.fields as { updated?: string })?.updated ?? '') as string;
-    if (updated && updated > maxUpdated) maxUpdated = updated;
-  }
+  });
+
+  results.sort((a, b) => a.key.localeCompare(b.key));
+  actions.push(...results);
 
   state.cursor = maxUpdated || state.cursor;
   if (!dry) saveState(projectKey, state);

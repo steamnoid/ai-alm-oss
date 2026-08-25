@@ -73,3 +73,4 @@ items, or touch GitHub PR state.
 
 ## V1.2 — fork feature branch
 Write tests on the FORK feature branch (`branchForWave` = aialm-oss/<repo>-<issue#>-<waveKey7>), after `syncFork` (fetch upstream → reset base → rebase); push via `httpsPushUrl` (token). NEVER touch upstream main. Agent performs repo writes; helpers plan/classify.
+Each wave works in its own isolated fork clone (`cloneWave` → `.work/<waveKey>/`) so parallel waves never share a working copy.

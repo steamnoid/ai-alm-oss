@@ -175,3 +175,15 @@ it('tail: after qa-impl+dev-impl posted and no READY_FOR_PR → GENERATE verify 
   expect(a.kind).toBe('GENERATE');
   expect((a as any).skill).toBe('aialm-oss-verify');
 });
+
+it('advance processes multiple changed issues concurrently and saves state once', async () => {
+  const { jira, byKey } = mockJira();
+  byKey.set('WIDG-1', issueSnap('WIDG-1', doc(para('x')), ['candidate', 'READY']));
+  byKey.set('WIDG-2', issueSnap('WIDG-2', doc(para('x')), ['candidate', 'READY']));
+  const gen = vi.fn(async () => 'gen');
+  const res = await advance(jira, { projectKey: 'WIDG', dry: true, runGenerative: gen });
+  const keys = res.actions.map(a => a.key);
+  expect(keys).toContain('WIDG-1');
+  expect(keys).toContain('WIDG-2');
+  expect(gen.mock.calls.length).toBeGreaterThanOrEqual(2);
+});

@@ -47,3 +47,17 @@ describe('syncForkCommands', () => {
     expect(cmds).toContain('git push origin aialm-oss/x');
   });
 });
+
+import { cloneWave, waveWorkdir } from '../../src/aialm/oss/github/fork.ts';
+
+describe('cloneWave', () => {
+  it('isolates a wave in its own workdir and syncs its own branch', () => {
+    const w = cloneWave({ upstream: 'https://github.com/steamnoid/wellbeing-tracker-public', forkRepo: 'https://x-access-token:t@github.com/paligakrzychu/wellbeing-tracker-public', base: 'main', branch: 'aialm-oss/x', workKey: 'WELLBEINGT-2' });
+    expect(w.dir).toBe('.work/WELLBEINGT-2');
+    expect(w.commands[0]).toBe('rm -rf .work/WELLBEINGT-2');
+    expect(w.commands[1]).toContain('git clone');
+    expect(w.commands.some(c => c.includes('cd .work/WELLBEINGT-2 && git fetch upstream'))).toBe(true);
+    expect(w.commands.some(c => c.includes('cd .work/WELLBEINGT-2 && git checkout -B aialm-oss/x'))).toBe(true);
+    expect(waveWorkdir('WELLBEINGT-2')).toBe('.work/WELLBEINGT-2');
+  });
+});

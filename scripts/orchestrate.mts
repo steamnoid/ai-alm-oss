@@ -32,6 +32,7 @@ const args = parseArgs();
 const projectKey = args.project;
 const dry = Boolean(args.dry);
 const intervalSec = Number(args.interval ?? 30);
+const workers = Number(args.workers ?? 4);
 const once = Boolean(args.once);
 
 if (!projectKey) {
@@ -48,7 +49,7 @@ writeFileSync(LOCK, String(process.pid));
 const jira = new JiraClient();
 
 async function poll(): Promise<void> {
-  const res = await advance(jira, { projectKey, dry, runGenerative });
+  const res = await advance(jira, { projectKey, dry, runGenerative, workers });
   console.log(`[${new Date().toISOString()}] ${projectKey} scanned=${res.scanned} actions=${res.actions.length} cursor=${res.cursor ?? '(none)'}`);
   for (const a of res.actions) console.log(`   ${a.key} -> ${a.action}: ${a.detail}`);
 }
