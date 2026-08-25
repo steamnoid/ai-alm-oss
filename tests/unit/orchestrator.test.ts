@@ -214,3 +214,29 @@ it('advance processes multiple changed issues concurrently and saves state once'
   // dry never launches the generative runner
   expect(gen.mock.calls.length).toBe(0);
 });
+
+import { skillStage } from '../../src/aialm/oss/alm/board.ts';
+
+describe('board stages', () => {
+  it('maps skills to their analyst columns', () => {
+    expect(skillStage('aialm-oss-po-analyze')).toBe('Agent Working (PO Analyst)');
+    expect(skillStage('aialm-oss-qa-analyze')).toBe('Agent Working (QA Analyst)');
+    expect(skillStage('aialm-oss-arch-analyze')).toBe('Agent Working (ARCH Analyst)');
+    expect(skillStage('aialm-oss-sec-analyze')).toBe('Agent Working (SEC Analyst)');
+    expect(skillStage('aialm-oss-dev-analyst')).toBe('Agent Working (DEV Analyst)');
+    expect(skillStage('aialm-oss-pr')).toBe('Agent Working (PR)');
+  });
+
+  it('WAIT on po proposals maps to Awaiting Approval (PO) column', async () => {
+    const { jira, byKey, comments } = mockJira();
+    byKey.set('WIDG-1', issueSnap('WIDG-1', doc(para('x')), ['candidate', 'READY']));
+    comments.set('WIDG-1', [
+      { id: 'sel', bodyText: '[AI-generated] Proposal aialm-oss-discover:dddd111 proposal:dddd111' },
+      { id: 'h0', bodyText: 'APPROVE:dddd111' },
+      { id: 'ai', bodyText: '[AI-generated] Proposal aialm-oss-po-analyze:8d1e8e8 proposal:8d1e8e8' },
+    ]);
+    const a = await resolveNext(jira, { projectKey: 'WIDG', issueKey: 'WIDG-1' });
+    expect(a.kind).toBe('WAIT');
+    expect((a as any).reason).toContain('po proposals');
+  });
+});

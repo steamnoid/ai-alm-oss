@@ -132,6 +132,32 @@ export class JiraClient {
     await this.req('PUT', `/rest/api/3/issue/${encodeURIComponent(issueKey)}/assignee`, { accountId });
   }
 
+  /** Available statuses for each issue type in a project (board column mapping). */
+  async getProjectStatuses(issueKey: string): Promise<{ name: string; id: string }[]> {
+    const key = issueKey.split('-')[0]!;
+    const r = await this.req('GET', `/rest/api/3/project/${encodeURIComponent(key)}/statuses`);
+    const types = r.data as any[];
+    const task = types.find(t => t.name === 'Task') ?? types[0] ?? {};
+    return ((task.statuses ?? []) as any[]).map(s => ({ name: s.name as string, id: String(s.id) }));
+  }
+
+  /** Available workflow transitions for an issue. */
+  async getTransitions(issueKey: string): Promise<{ id: string; name: string; to?: { name?: string; id?: string } }[]> {
+    const r = await this.req('GET', `/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`);
+    return (((r.data as any).transitions ?? []) as any[]).map(t => ({
+      id: String(t.id),
+      name: t.name as string,
+      to: t.to ? { name: t.to.name as string, id: t.to.id ? String(t.to.id) : undefined } : undefined,
+    }));
+  }
+
+  /** Perform a workflow transition by transition id. */
+  async transitionIssue(issueKey: string, transitionId: string): Promise<void> {
+    await this.req('POST', `/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`, {
+      transition: { id: transitionId },
+    });
+  }
+
   async addComment(issueKey: string, adf: unknown): Promise<{ id: string }> {
     const r = await this.req('POST', `/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`, {
       body: adf,
