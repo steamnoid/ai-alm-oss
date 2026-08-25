@@ -8,3 +8,4 @@ dist/
 state/
 .orchestrate.lock
 .work/
+.jira-session.json
