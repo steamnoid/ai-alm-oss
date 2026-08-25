@@ -22,3 +22,4 @@ cp .env.example .env   # fill in Jira credentials
 npm install
 npm run typecheck && npm test
 ```
+- Async generative dispatch: the poller enqueues generative steps (po-analyze etc.) and a worker runs them as agent subprocesses — `advance` never blocks on the agent; deterministic steps run inline.

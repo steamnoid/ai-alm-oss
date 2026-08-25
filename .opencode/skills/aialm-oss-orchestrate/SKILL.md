@@ -40,3 +40,7 @@ npx tsx scripts/orchestrate.mts --project=WELLBEINGT [--dry|--once]
 ## Tooling / MCP
 
 Allow: Jira read/search + assign/unassign + comment list; deterministic mutators (import/apply/decompose/review); spawn the agent for the next skill. MUST NOT: invent requirements, touch GitHub state, comment on GitHub.
+
+## Async generative dispatch (V1.3)
+
+`advance` never spawns the agent. Generative steps are **enqueued** (`state/<project>.queue.json`) and a separate worker drains them (`opencode run <skill> <key>`), bounded by `--genWorkers` (default 1) with a per-job timeout. Deterministic steps (selection proposal, import/apply/decompose/review) run inline. `--dry` reports only.

@@ -4,11 +4,14 @@ import type { JiraClient } from '../alm/jira.ts';
 import { doc, para } from '../alm/adf.ts';
 import { extractAc } from '../po/work-itemize.ts';
 import { hasHumanApprovalFor, type ApprovalComment } from '../shared/approval.ts';
+import { assignRoleApprover } from '../governance/roles.ts';
 import { importWorkItem } from '../po/importer.ts';
 import { decompose } from '../po/decomposer.ts';
 import { applyApprovedQa } from '../qa/applier.ts';
 import { applyApprovedDev } from '../dev/applier.ts';
 import { applyApprovedReview } from '../review/review.ts';
+import { buildSelectionProposalDoc, selectionProposalId } from '../discover/discover.ts';
+import { enqueueGenerative, hasActiveJob } from './queue.ts';
 import { extractExternalRef } from '../discover/discover.ts';
 
 const PO = 'aialm-oss-po-analyze:';
@@ -33,6 +36,7 @@ export type OrchestratorAction =
   | { kind: 'NONE' }
   | { kind: 'WAIT'; reason: string }
   | { kind: 'GENERATE'; skill: string; targetKey: string; repoRef: string }
+  | { kind: 'POST_SELECTION'; targetKey: string; projectKey: string; ref: string }
   | { kind: 'APPLY'; mutator: 'import' | 'decompose' | 'qa-apply' | 'dev-apply' | 'sec-apply' | 'arch-apply'; targetKey: string; projectKey: string; ref: string };
 
 function statePath(projectKey: string): string {
@@ -84,6 +88,29 @@ function refOf(description: unknown): string {
   return extractExternalRef(JSON.stringify(description ?? {})) ?? '';
 }
 
+function commentsOf(jira: JiraClient, key: string): Promise<{ bodyText: string }[]> {
+  return jira.listComments(key);
+}
+
+/** Deterministically post the candidate-selection proposal (no agent involved). */
+async function postSelectionProposal(jira: JiraClient, act: Extract<OrchestratorAction, { kind: 'POST_SELECTION' }>, dry: boolean): Promise<string> {
+  if (dry) return `dry:selection:${act.targetKey}`;
+  const parsed = parseExternalRef(act.ref);
+  const issue = (await jira.getIssue(act.targetKey, ['summary'])) as { fields?: { summary?: string } };
+  const title = issue.fields?.summary?.replace(/^\[candidate\]\s*/, '') ?? '';
+  await jira.addAiComment(act.targetKey, buildSelectionProposalDoc({
+    repo: parsed.repo,
+    number: parsed.issueNumber,
+    title,
+    url: parsed.url,
+    recommendation: 'READY',
+  }));
+  await assignRoleApprover(jira, act.targetKey, 'po');
+  return `selection-posted:${act.targetKey}`;
+}
+
+/** Deterministic candidate-gate step (part of applyDeterministic switch). */
+
 /** Post a stage-status comment once (idempotent by its marker). */
 async function postStageStatus(jira: JiraClient, key: string, comments: { bodyText: string }[], text: string): Promise<void> {
   if (comments.some(c => c.bodyText.includes(`[status] ${text}`))) return;
@@ -114,7 +141,7 @@ export async function resolveNext(
     // Candidate selection gate (same convention as every other gate): the
     // pipeline never starts an un-approved candidate.
     if (!hasMarker(comments, 'aialm-oss-discover:')) {
-      return { kind: 'GENERATE', skill: 'aialm-oss-discover', targetKey: key, repoRef: refOf(description) };
+      return { kind: 'POST_SELECTION', targetKey: key, projectKey: input.projectKey, ref: refOf(description) };
     }
     if (approvedIds(comments, 'aialm-oss-discover:').length === 0) {
       await postStageStatus(jira, key, comments, 'awaiting candidate-selection approval — comment ✅ or APPROVE:<id> on the selection proposal');
@@ -238,9 +265,9 @@ function workerPool<T>(items: T[], workers: number, fn: (item: T) => Promise<voi
 /** One poll pass: read the delta via the `updated`-cursor and advance each changed issue. */
 export async function advance(
   jira: JiraClient,
-  input: { projectKey: string; dry?: boolean; runGenerative?: GenerativeRunner; cursorOverride?: string; workers?: number },
+  input: { projectKey: string; dry?: boolean; cursorOverride?: string; workers?: number },
 ): Promise<AdvanceResult> {
-  const { projectKey, dry = false, runGenerative, workers = 4 } = input;
+  const { projectKey, dry = false, workers = 4 } = input;
   const state = loadState(projectKey);
   const cursor = input.cursorOverride ?? state.cursor ?? '';
   const jql = `project = ${projectKey} AND updated >= "${cursor || '1970-01-01 00:00'}" ORDER BY updated ASC`;
@@ -272,7 +299,16 @@ export async function advance(
       let detail = '';
       if (action.kind === 'WAIT') detail = `wait:${action.reason}`;
       else if (action.kind === 'APPLY') detail = await applyDeterministic(jira, action, dry);
-      else detail = dry ? `dry:${action.skill}:${action.targetKey}` : runGenerative ? await runGenerative(action) : `skip-generative:${action.skill}`;
+      else if (action.kind === 'POST_SELECTION') detail = await postSelectionProposal(jira, action, dry);
+      else {
+        // Generative step: enqueue for the async worker — never blocks the pass.
+        if (dry) detail = `dry:${action.skill}:${action.targetKey}`;
+        else if (hasActiveJob(projectKey, action.skill, action.targetKey)) detail = `queued:${action.skill}:${action.targetKey}`;
+        else {
+          const enq = enqueueGenerative(projectKey, { skill: action.skill, targetKey: action.targetKey, repoRef: action.repoRef });
+          detail = enq.enqueued ? `enqueued:${action.skill}:${action.targetKey}` : `already-queued:${action.skill}`;
+        }
+      }
       results.push({ key, action: action.kind, detail });
       state.consumed.push(`${key}:${action.kind}:${detail}`);
     } catch (e) {
@@ -280,10 +316,14 @@ export async function advance(
     }
   });
 
-  results.sort((a, b) => a.key.localeCompare(b.key));
-  actions.push(...results);
-
-  state.cursor = maxUpdated || state.cursor;
-  if (!dry) saveState(projectKey, state);
+  try {
+    results.sort((a, b) => a.key.localeCompare(b.key));
+    actions.push(...results);
+    state.cursor = maxUpdated || state.cursor;
+  } finally {
+    // Always persist the cursor/ledger — even when a pass partially fails —
+    // so the poller never re-scans the whole project.
+    if (!dry) saveState(projectKey, state);
+  }
   return { projectKey, scanned: issues.length, actions, cursor: state.cursor };
 }

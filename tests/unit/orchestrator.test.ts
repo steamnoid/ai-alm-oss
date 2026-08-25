@@ -37,12 +37,12 @@ function mockJira() {
 const AC = 'Scenario: Selected event is visually marked\nGiven events listed\nWhen I click Select\nThen it is marked';
 
 describe('resolveNext', () => {
-  it('candidate without a selection proposal → GENERATE discover (selection gate)', async () => {
+  it('candidate without a selection proposal → POST_SELECTION (deterministic gate)', async () => {
     const { jira, byKey } = mockJira();
     byKey.set('WIDG-1', issueSnap('WIDG-1', doc(para('x')), ['candidate', 'READY']));
     const a = await resolveNext(jira, { projectKey: 'WIDG', issueKey: 'WIDG-1' });
-    expect(a.kind).toBe('GENERATE');
-    expect((a as any).skill).toBe('aialm-oss-discover');
+    expect(a.kind).toBe('POST_SELECTION');
+    expect((a as any).targetKey).toBe('WIDG-1');
   });
 
   it('candidate with unapproved selection proposal → WAIT (backlog, no auto po-analyze)', async () => {
@@ -153,7 +153,7 @@ describe('advance', () => {
     expect(res.scanned).toBeGreaterThanOrEqual(1);
     expect(res.actions.length).toBeGreaterThanOrEqual(1);
     const a = res.actions[0]!;
-    expect(a.detail).toBe('dry:aialm-oss-discover:WIDG-1');
+    expect(a.detail).toBe('dry:selection:WIDG-1');
   });
 
   it('fault isolation: one erroring issue does not stop the pass', async () => {
@@ -207,7 +207,7 @@ it('advance processes multiple changed issues concurrently and saves state once'
   byKey.set('WIDG-1', issueSnap('WIDG-1', doc(para('x')), ['candidate', 'READY']));
   byKey.set('WIDG-2', issueSnap('WIDG-2', doc(para('x')), ['candidate', 'READY']));
   const gen = vi.fn(async () => 'gen');
-  const res = await advance(jira, { projectKey: 'WIDG', dry: true, runGenerative: gen });
+  const res = await advance(jira, { projectKey: 'WIDG', dry: true });
   const keys = res.actions.map(a => a.key);
   expect(keys).toContain('WIDG-1');
   expect(keys).toContain('WIDG-2');
