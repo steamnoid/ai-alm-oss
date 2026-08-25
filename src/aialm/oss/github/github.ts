@@ -84,6 +84,11 @@ export class GithubClient {
     return (await this.req('GET', `/repos/${owner}/${repo}`)).data as RepoInfo;
   }
 
+  /** The authenticated account (requires a token). */
+  async me(): Promise<{ login: string; id?: number }> {
+    return (await this.req('GET', '/user')).data as { login: string; id?: number };
+  }
+
   async listOpenIssues(owner: string, repo: string, maxPages = 10): Promise<IssueRef[]> {
     const out: IssueRef[] = [];
     for (let page = 1; page <= maxPages; page++) {
@@ -133,9 +138,42 @@ export class GithubClient {
     return list.filter(x => x.type === 'file').map((x: any) => x.name as string);
   }
 
+  /** Latest GitHub Actions workflow runs (public repos readable without auth). */
+  async listActionsRuns(owner: string, repo: string, branch?: string): Promise<any[]> {
+    const q = branch
+      ? `?branch=${encodeURIComponent(branch)}&per_page=5&status=completed`
+      : '?per_page=5&status=completed';
+    return ((await this.req('GET', `/repos/${owner}/${repo}/actions/runs${q}`)).data as any).workflow_runs ?? [];
+  }
+
+  /** Fetch job-level outcomes of a run (for per-job unit/e2e reporting). */
+  async getActionsRunJobs(owner: string, repo: string, runId: number): Promise<any[]> {
+    return ((await this.req('GET', `/repos/${owner}/${repo}/actions/runs/${runId}/jobs`)).data as any).jobs ?? [];
+  }
+
   async fork(owner: string, repo: string): Promise<RepoInfo> {
     const r = await this.req('POST', `/repos/${owner}/${repo}/forks`);
     return r.data as RepoInfo;
+  }
+
+  /** Ensure a fork exists for the authenticated account; returns the fork repo info. */
+  async ensureFork(owner: string, repo: string): Promise<RepoInfo> {
+    // If the authenticated user already has a fork, POST /forks returns 422; GET first.
+    try {
+      const me = await this.req('GET', '/user');
+      const login = (me.data as any).login as string;
+      const existing = await this.req('GET', `/repos/${login}/${repo}`);
+      const d = existing.data as RepoInfo;
+      if (d.fork && d.full_name === `${login}/${repo}`) return d;
+    } catch {
+      /* no existing usable fork — create it */
+    }
+    return this.fork(owner, repo);
+  }
+
+  /** HTTPS push URL for a fork/branch using a token (no SSH key required). */
+  httpsPushUrl(owner: string, repo: string, token: string): string {
+    return `https://x-access-token:${token}@github.com/${owner}/${repo}`;
   }
 
   /** Create branch `branch` at the head of `fromBranch` (default repo default). */

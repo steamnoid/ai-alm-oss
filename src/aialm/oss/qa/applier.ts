@@ -1,6 +1,6 @@
 import type { JiraClient, JiraComment } from '../alm/jira.ts';
 import { type AdfNode, bullets, codeBlock, doc, para } from '../alm/adf.ts';
-import { hasHumanApprovalFor, type ApprovalComment } from '../shared/approval.ts';
+import { hasHumanApprovalFor, unassignIfAllDecided, type ApprovalComment } from '../shared/approval.ts';
 import { normalize, proposalIdFor } from '../shared/identity.ts';
 import { MARKERS } from '../shared/markers.ts';
 import type { ReportStatus, StatusRow } from '../shared/status.ts';
@@ -218,6 +218,7 @@ export async function applyApprovedQa(
     if (proposals.length === 0) {
       rows.push({ target: targetKey, status: 'SKIPPED', detail: 'no approved QA proposals', });
       targetResults.push({ key: targetKey, status: 'SKIPPED', count: 0 });
+      await unassignIfAllDecided(jira, targetKey, comments);
       continue;
     }
 
@@ -225,6 +226,7 @@ export async function applyApprovedQa(
     if (!changed) {
       rows.push({ target: targetKey, status: 'SKIPPED', detail: 'already applied' });
       targetResults.push({ key: targetKey, status: 'SKIPPED', count: proposals.length });
+      await unassignIfAllDecided(jira, targetKey, comments);
       continue;
     }
 
@@ -235,7 +237,12 @@ export async function applyApprovedQa(
     } catch (e) {
       rows.push({ target: targetKey, status: 'BLOCKED', detail: (e as Error).message });
       targetResults.push({ key: targetKey, status: 'BLOCKED', count: proposals.length });
+      continue;
     }
+
+    // Assignee-hygiene: once approved QA proposals are applied and nothing remains
+    // undecided, clear the assignee so no stale item pings the human.
+    await unassignIfAllDecided(jira, targetKey, comments);
   }
 
   await jira.addComment(input.parentKey, qaApplySummaryComment(rows, malformed));

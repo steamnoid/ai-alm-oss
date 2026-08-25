@@ -20,11 +20,14 @@ Single import per run; idempotent by `owner/repo#N`.
 2. Select approved po-analyze proposals (`hasHumanApprovalFor`).
 3. If no approved proposal → BLOCKED (import gate not passed); post one Import
    Report comment and stop.
-4. Create exactly one AI-ALM Work Item in the ALM project:
-   - title = external issue title (normalized)
-   - description = human summary + `## Acceptance Criteria` from approved set
+4. Upgrade the candidate record **in place** into the governed AI-ALM Work Item
+   (same ticket — no new issue; full traceability preserved):
+   - description = existing qualification + `## Acceptance Criteria` from approved set
    - `externalSource = { github, owner/repo#N, url }` + `aialm-external:` marker
-5. Post an Import Report comment: CREATED / SKIPPED / FAILED / NOT_ATTEMPTED rows.
+   - labels: keep `candidate` + add `work-item`
+5. Assignee-hygiene: after a successful run (CREATED or SKIPPED), if no proposal
+   remains undecided, clear the assignee (unassign).
+6. Post an Import Report comment: CREATED / SKIPPED / FAILED / NOT_ATTEMPTED rows.
 
 ## Selection & mutation rules
 

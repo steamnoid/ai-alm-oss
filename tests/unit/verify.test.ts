@@ -3,6 +3,7 @@ import {
   classifyChild,
   extractGeneratedScenarios,
   makeEvidence,
+  runValidation,
   prReadiness,
   scenarioIdFor,
   scenarioResult,
@@ -109,5 +110,29 @@ describe('verifySummaryComment', () => {
     expect(t).toContain('Verification evidence summary');
     expect(t).toContain('PASS WIDG-100');
     expect(t).toContain('PR readiness: READY_FOR_PR');
+  });
+});
+
+describe('runValidation', () => {
+  function fakeRunner(results: { exitCode: number; output?: string; errored?: boolean }[]) {
+    let i = 0;
+    return async (_cmd: string) => {
+      const r = results[i++] ?? { exitCode: 0, output: 'ok' };
+      return { exitCode: r.exitCode, output: r.output ?? 'out', errored: r.errored ?? false };
+    };
+  }
+  it('maps commands to EvidenceEntry in order (pass/fail)', async () => {
+    const ev = await runValidation(['npm run typecheck', 'npm test'], { runner: fakeRunner([{ exitCode: 0, output: 'ok' }, { exitCode: 1, output: 'boom' }]), now: () => 'T' });
+    expect(ev).toHaveLength(2);
+    expect(ev[0]!.command).toBe('npm run typecheck');
+    expect(ev[0]!.result).toBe('pass');
+    expect(ev[1]!.result).toBe('fail');
+    expect(ev[1]!.artifactRef).toBe('boom');
+    expect(ev[0]!.timestamp).toBe('T');
+  });
+  it('marks a command error as error and never omits output', async () => {
+    const ev = await runValidation(['nope'], { runner: fakeRunner([{ exitCode: 1, errored: true, output: 'ENOENT' }]) });
+    expect(ev[0]!.result).toBe('error');
+    expect(ev[0]!.artifactRef).toContain('ENOENT');
   });
 });

@@ -68,3 +68,6 @@ Allow: retrieve/comment/reaction reads, target-repo read/write for app code,
 bash for typecheck/lint/unit.
 MUST NOT: modify AC / QA / contract intent, work item state/priority, create
 work items, open PRs.
+
+## V1.2 — fork feature branch
+Write feature code on the FORK feature branch (`branchForWave`), after `syncFork`; push via `httpsPushUrl`. NEVER touch upstream main. Agent performs repo writes; helpers plan/classify (HOOK/AC slices).

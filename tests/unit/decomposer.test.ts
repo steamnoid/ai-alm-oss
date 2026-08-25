@@ -175,6 +175,7 @@ describe('decompose orchestrator', () => {
           return { key: `WIDG-${100 + creates.length}` };
         }),
         updateIssue: vi.fn(async () => updates.push('x')),
+        unassign: vi.fn(async () => {}),
       } as unknown as JiraClient,
       creates,
       posted,

@@ -56,3 +56,6 @@ anything, or bypass branch protection / contribution rules.
 ## Downstream
 
 Maintainer feedback enters `/aialm-oss-feedback`.
+
+## V1.2 — fork → upstream PR
+PR head = <forkOwner>:<branchForWave(...)>, base = upstream default; one PR per wave (prWaveKey); idempotent. Commit style/DCO from Profile. Access-grant Viewer is a human-approval-gated proposal (agent invites/grants only after APPROVE), never automatic.

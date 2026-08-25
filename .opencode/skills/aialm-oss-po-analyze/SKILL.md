@@ -47,7 +47,7 @@ proposal:<id>  (+ creative:<id> if creative)
 Raised issue — Why it matters
 Proposed acceptance criteria
 <pre>Scenario: ...</pre>
-AI proposes, human approves via ✅.
+AI proposes; a human approves by commenting ✅ (or APPROVE:<id>).
 ```
 
 ## Rules

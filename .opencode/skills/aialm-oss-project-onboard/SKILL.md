@@ -23,6 +23,22 @@ repository's observable contribution workflow into an immutable
 - name `[AI-ALM] owner/repo`, company-managed Kanban, PRIVATE
 - idempotent: exact-name match is reused, never duplicated
 
+**Step 0.5 — Ensure `Project Governance` ticket (`ensureGovernanceTicket`)**
+
+- label `governance`, summary `Project Governance`, `## Roles` block
+  (`po:`/`qa:`/`dev:` + optional `sec:`/`arch:` account ids) and `## Flags`
+  (`sec`/`arch` default **on**); idempotent. The first command on a repo
+  auto-creates it; edit to split responsibilities or toggle roles.
+
+**Step 0.6 — Ensure CI (`aialm-oss-ci-ensure`)**
+
+- `ProfileCollector.hasCi` (GitHub Actions present) + fallback validation
+  commands from real `package.json` scripts (typecheck/test/build).
+- If `hasCi=false`: build `.github/workflows/ci.yml` from real commands
+  (unit + e2e) → **propose** → human `APPROVE` → write/commit/push →
+  `verifyWorkflowRun` (green run required) → evidence (`run_id`); failure →
+  per-job logs, iterate, after N retries → BLOCKED. Repo with CI → SKIPPED.
+
 **Step 1 — Collect Profile (`ProfileCollector.collect`)**
 
 - repo identity, default branch, languages (manifest probes + primary language)
@@ -39,5 +55,5 @@ refresh = re-run of this skill.
 ## Tooling / MCP
 
 Allow: GitHub read via adapter seam, ALM writes limited to project creation +
-Profile issue. MUST NOT: create/modify other ALM items, comment on GitHub,
-change target-repo state.
+Governance ticket + Profile issue. MUST NOT: create/modify other ALM items,
+comment on GitHub, change target-repo state.

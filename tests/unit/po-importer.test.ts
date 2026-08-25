@@ -57,8 +57,9 @@ function humanApprove(id: string, text = `APPROVE:${id}`): JiraComment {
 }
 
 function mockJira(opts: { comments?: JiraComment[]; existingImports?: { key: string; fields: { description: unknown } }[] } = {}) {
-  const createCalls: any[] = [];
+  const updateCalls: any[] = [];
   const reportTexts: string[] = [];
+  const unassigned: string[] = [];
   let rn = 0;
   return {
     jira: {
@@ -67,14 +68,21 @@ function mockJira(opts: { comments?: JiraComment[]; existingImports?: { key: str
         reportTexts.push(adfToPlainText(adf));
         return { id: `r${++rn}` };
       }),
-      createIssue: vi.fn(async (fields: Record<string, unknown>) => {
-        createCalls.push(fields);
-        return { key: 'WIDG-100' };
+      getIssue: vi.fn(async (key: string) => ({
+        key,
+        fields: { description: doc(para('existing body')), labels: ['candidate', 'READY'] },
+      })),
+      updateIssue: vi.fn(async (key: string, fields: Record<string, unknown>) => {
+        updateCalls.push({ key, fields });
+      }),
+      unassign: vi.fn(async (key: string) => {
+        unassigned.push(key);
       }),
       searchJql: vi.fn(async () => opts.existingImports ?? []),
     } as unknown as JiraClient,
-    createCalls,
+    updateCalls,
     reportTexts,
+    unassigned,
   };
 }
 
@@ -117,6 +125,16 @@ describe('approvedProposals', () => {
     const approved = approvedProposals(comments);
     expect(approved).toHaveLength(1);
   });
+
+  it('an AI-authored APPROVE comment is never counted (self-approval blocked)', () => {
+    const aiApprove: JiraComment = {
+      id: 'ai',
+      bodyAdf: doc(para('[AI-generated] APPROVE:' + pid)),
+      bodyText: '[AI-generated] APPROVE:' + pid,
+    };
+    const comments = [propComment(finding), aiApprove];
+    expect(approvedProposals(comments)).toHaveLength(0);
+  });
 });
 
 describe('workItemDescription', () => {
@@ -147,28 +165,26 @@ describe('importReportComment', () => {
 
 describe('importWorkItem — gate', () => {
   it('BLOCKED when no proposal is approved; never creates', async () => {
-    const { jira, createCalls, reportTexts } = mockJira({
+    const { jira, reportTexts } = mockJira({
       comments: [propComment(finding), humanApprove(pid + 'f'), humanApprove('0000000')], // no matching approval
     });
     const r = await importWorkItem(jira, baseInput);
     expect(r.status).toBe('BLOCKED');
     expect(r.approvedCount).toBe(0);
-    expect(createCalls).toHaveLength(0);
     // exactly one report comment posted
     expect(reportTexts).toHaveLength(1);
     expect(reportTexts[0]!).toContain('BLOCKED acme/widgets#12');
   });
 
   it('skips unapproved candidates entirely (no created item)', async () => {
-    const { jira, createCalls } = mockJira({ comments: [propComment(finding)] });
+    const { jira } = mockJira({ comments: [propComment(finding)] });
     await importWorkItem(jira, baseInput);
-    expect(createCalls).toHaveLength(0);
   });
 });
 
 describe('importWorkItem — dedupe & single-create', () => {
   it('SKIPPED when a work item already exists for the ref; no create', async () => {
-    const { jira, createCalls, reportTexts } = mockJira({
+    const { jira, reportTexts, unassigned } = mockJira({
       comments: [propComment(finding), humanApprove(pid)],
       existingImports: [
         { key: 'WIDG-100', fields: { description: workItemDescription(baseInput, [{ id: pid, gherkin: finding.gherkin, aiGenerated: true }]) } },
@@ -177,27 +193,31 @@ describe('importWorkItem — dedupe & single-create', () => {
     const r = await importWorkItem(jira, baseInput);
     expect(r.status).toBe('SKIPPED');
     expect(r.workItemKey).toBe('WIDG-100');
-    expect(createCalls).toHaveLength(0);
     expect(reportTexts[0]!).toContain('SKIPPED acme/widgets#12 — already imported as WIDG-100');
+    expect(unassigned).toContain('WIDG-5');
   });
 
-  it('CREATED with exactly one createIssue call; approved AC written; traceable ref', async () => {
+  it('CREATED by upgrading the candidate in place; no new ticket; assignee cleared', async () => {
     const comments = [propComment(finding), humanApprove(pid)];
-    const { jira, createCalls, reportTexts } = mockJira({ comments });
+    const { jira, updateCalls, reportTexts, unassigned } = mockJira({ comments });
     const r = await importWorkItem(jira, baseInput);
     expect(r.status).toBe('CREATED');
     expect(r.approvedCount).toBe(1);
-    expect(createCalls).toHaveLength(1);
-    const created = createCalls[0]!;
-    expect(created.labels).toEqual(['work-item', 'external']);
-    expect(created.summary).toBe('Login broken');
-    const desc = adfToPlainText(created.description);
+    expect(r.workItemKey).toBe('WIDG-5');
+    // one in-place update, never a createIssue
+    expect(updateCalls).toHaveLength(1);
+    expect(updateCalls[0]!.key).toBe('WIDG-5');
+    const labels = updateCalls[0]!.fields.labels as string[];
+    expect(labels).toEqual(['candidate', 'READY', 'work-item', 'external']);
+    const desc = adfToPlainText(updateCalls[0]!.fields.description);
     expect(desc).toContain('## Acceptance Criteria');
     expect(desc).toContain(finding.gherkin);
     expect(desc).toContain('externalSource: github acme/widgets#12');
     expect(desc).toContain(externalMarker('acme/widgets#12'));
-    // human summary preserved verbatim
-    expect(desc).toContain('Repro in #12.');
-    expect(reportTexts[0]!).toContain('CREATED acme/widgets#12 — WIDG-100');
+    // assignee-hygiene: nothing undecided → unassigned
+    expect(unassigned).toContain('WIDG-5');
+    // human summary preserved verbatim (existing description kept)
+    expect(desc).toContain('existing body');
+    expect(reportTexts[0]!).toContain('CREATED acme/widgets#12 — WIDG-5');
   });
 });

@@ -1,4 +1,4 @@
-import type { JiraClient } from '../alm/jira.ts';
+import { JiraError, type JiraClient } from '../alm/jira.ts';
 
 /**
  * Derive a Jira project key from a repo name: uppercase alphanumerics only,
@@ -39,13 +39,24 @@ export async function provisionRepoProject(
       if (existing.name === wantedName) return { projectKey: key, created: false };
       continue; // collision with an unrelated project
     }
-    await jira.createKanbanProject({
-      key,
-      name: wantedName,
-      description: `Governed execution trace for ${input.owner}/${input.repo}. Created by ai-alm-oss.`,
-      leadAccountId: input.leadAccountId,
-    });
-    return { projectKey: key, created: true };
+    try {
+      await jira.createKanbanProject({
+        key,
+        name: wantedName,
+        description: `Governed execution trace for ${input.owner}/${input.repo}. Created by ai-alm-oss.`,
+        leadAccountId: input.leadAccountId,
+      });
+      return { projectKey: key, created: true };
+    } catch (e) {
+      // The project may already exist (e.g. archived / created out of band) even though
+      // projectExists() did not see it. Reuse it when the name matches; else move on.
+      if (e instanceof JiraError && e.status === 400 && /already exists|uses this project key/i.test(e.detail)) {
+        const existing = await jira.getProject(key);
+        if (existing.name === wantedName) return { projectKey: key, created: false };
+        continue;
+      }
+      throw e;
+    }
   }
   throw new Error(`No free project key for "${wantedName}" (tried ${candidates.join(', ')})`);
 }

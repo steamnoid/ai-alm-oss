@@ -1,6 +1,6 @@
 import type { JiraClient, JiraComment } from '../alm/jira.ts';
 import { type AdfNode, bullets, doc, para } from '../alm/adf.ts';
-import { hasHumanApprovalFor, type ApprovalComment } from '../shared/approval.ts';
+import { hasHumanApprovalFor, unassignIfAllDecided, type ApprovalComment } from '../shared/approval.ts';
 import { normalize, proposalIdFor } from '../shared/identity.ts';
 import { MARKERS } from '../shared/markers.ts';
 import type { StatusRow } from '../shared/status.ts';
@@ -244,6 +244,7 @@ export async function applyApprovedDev(
     if (proposals.length === 0) {
       rows.push({ target: targetKey, status: 'SKIPPED', detail: 'no approved implementation contract proposals' });
       targetResults.push({ key: targetKey, status: 'SKIPPED', count: 0 });
+      await unassignIfAllDecided(jira, targetKey, comments);
       continue;
     }
 
@@ -251,6 +252,7 @@ export async function applyApprovedDev(
     if (!changed) {
       rows.push({ target: targetKey, status: 'SKIPPED', detail: 'already applied' });
       targetResults.push({ key: targetKey, status: 'SKIPPED', count: proposals.length });
+      await unassignIfAllDecided(jira, targetKey, comments);
       continue;
     }
 
@@ -261,7 +263,11 @@ export async function applyApprovedDev(
     } catch (e) {
       rows.push({ target: targetKey, status: 'BLOCKED', detail: (e as Error).message });
       targetResults.push({ key: targetKey, status: 'BLOCKED', count: proposals.length });
+      continue;
     }
+
+    // Assignee-hygiene: no undecided proposal → drop the stale assignee.
+    await unassignIfAllDecided(jira, targetKey, comments);
   }
 
   await jira.addComment(input.parentKey, devApplySummaryComment(rows, malformed));

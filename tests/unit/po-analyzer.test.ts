@@ -118,6 +118,9 @@ describe('runAnalyze', () => {
           posted.push(adfToPlainText(adf));
           return { id: `new-${++n}` };
         }),
+        searchJql: vi.fn(async () => []),
+        getProject: vi.fn(async () => ({ lead: { accountId: 'LEAD1' } })),
+        assign: vi.fn(async () => {}),
       } as unknown as JiraClient,
       posted,
     };

@@ -1,6 +1,6 @@
 import type { JiraClient, JiraComment } from '../alm/jira.ts';
 import { type AdfNode, bullets, codeBlock, doc, para } from '../alm/adf.ts';
-import { hasHumanApprovalFor, type ApprovalComment } from '../shared/approval.ts';
+import { hasHumanApprovalFor, unassignIfAllDecided, type ApprovalComment } from '../shared/approval.ts';
 import { normalize } from '../shared/identity.ts';
 import { MARKERS } from '../shared/markers.ts';
 import type { StatusRow } from '../shared/status.ts';
@@ -313,6 +313,10 @@ export async function decompose(jira: JiraClient, input: { parentKey: string; pr
 
   const rows: StatusRow[] = outcomes.map(o => ({ target: o.childKey, status: o.status, detail: o.key ?? o.detail }));
   await jira.addComment(input.parentKey, decomposeReportComment(rows));
+
+  // Assignee-hygiene: parents are only decomposed after package approval; once
+  // decomposition ran and nothing else is undecided, clear the stale assignee.
+  await unassignIfAllDecided(jira, input.parentKey, comments);
 
   const anyBad = outcomes.some(o => o.status === 'FAILED' || o.status === 'NOT_ATTEMPTED');
   const allSkipped = outcomes.length > 0 && outcomes.every(o => o.status === 'SKIPPED');

@@ -65,6 +65,15 @@ jobs:
     const collector = new ProfileCollector(stub);
     const p = await collector.collect('acme', 'widgets');
     expect(p.ciCommands).toEqual(['npm ci', 'npm test']);
+    expect(p.hasCi).toBe(true);
+  });
+
+  it('derives CI commands from package.json scripts when no workflow exists (hasCi=false)', async () => {
+    const pkg = JSON.stringify({ scripts: { test: 'vitest run', typecheck: 'tsc --noEmit', build: 'next build' } });
+    const stub = ghStub({ 'package.json': pkg });
+    const p = await new ProfileCollector(stub).collect('acme', 'widgets');
+    expect(p.hasCi).toBe(false);
+    expect(p.ciCommands).toEqual(['npm ci', 'npm run typecheck', 'npm test', 'npm run build']);
   });
 
   it('never invents missing fields', async () => {

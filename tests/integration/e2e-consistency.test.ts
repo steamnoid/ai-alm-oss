@@ -92,6 +92,9 @@ function makeHarness() {
       i.fields = { ...i.fields, ...fields };
       log.push(`update:${key}`);
     },
+    unassign: async (key: string) => {
+      log.push(`unassign:${key}`);
+    },
     searchJql: async (jql: string) => {
       const parent = /parent = ([A-Za-z0-9_-]+)/.exec(jql)?.[1];
       if (parent) return [...issues.values()].filter(i => i.fields.parent?.key === parent).map(i => ({ key: i.key, fields: i.fields }));

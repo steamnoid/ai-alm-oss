@@ -63,3 +63,6 @@ MUST NOT: post to GitHub, modify code/tests directly, change ALM item states.
 
 Closed loop: corrections → verify → updated commits on the existing PR (via the
 oss-pr idempotent path).
+
+## V1.2 — fetch + classify + access-grant
+`fetchPrReviewComments(gh, owner, repo, prNumber)` retrieves PR review comments via the adapter; `classifyReviewComment` → category/disposition/needsApproval. GitHub access-grant (invite + Viewer role) and revoke are governance actions: proposed (`accessGrantComment`) and executed by the agent ONLY after human approval — never automatic.

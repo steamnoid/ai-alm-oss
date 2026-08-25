@@ -136,6 +136,9 @@ describe('prepDecompose orchestrator', () => {
         listComments: vi.fn(async () => comments),
         addComment: vi.fn(async (_k: string, adf: unknown) => { posted.push(adfToPlainText(adf)); return { id: `r${posted.length}` }; }),
         createIssue: opts.createIssue ?? vi.fn(),
+        searchJql: vi.fn(async () => []),
+        getProject: vi.fn(async () => ({ lead: { accountId: 'LEAD1' } })),
+        assign: vi.fn(async () => {}),
       } as unknown as JiraClient,
       posted,
     };

@@ -69,6 +69,20 @@ describe('JiraClient seam', () => {
     expect(text).toContain('APPROVE:');
     expect(text).toContain('GENERATED QA hash: x');
   });
+
+  it('adfToPlainText renders emoji nodes via their attrs.text', () => {
+    const emoji = { type: 'emoji', attrs: { shortName: ':white_check_mark:', id: '2705', text: '✅' } };
+    const d = { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [emoji, { type: 'text', text: ' ok' }] }] };
+    expect(adfToPlainText(d)).toBe('✅ ok');
+  });
+
+  it('addAiComment refuses an unmarked approval-shaped comment (self-approval guard)', async () => {
+    const unmarked = doc(para('APPROVE:8d1e8e8'));
+    await expect(client.addAiComment('AIALMOSS-4', unmarked)).rejects.toThrow(/self-approval/);
+    const marked = doc(para('[AI-generated] Proposal — AIALMOSS-4 — aialm-oss-po-analyze:8d1e8e8'));
+    await client.addAiComment('AIALMOSS-4', marked);
+    expect(calls.length).toBeGreaterThan(0);
+  });
 });
 
 function makeClientWith(f: ReturnType<typeof vi.fn>) {

@@ -4,6 +4,7 @@ import { proposalHeader, proposalIdFor } from '../shared/identity.ts';
 import { MARKERS } from '../shared/markers.ts';
 import type { StatusRow } from '../shared/status.ts';
 import { extractAc } from '../po/work-itemize.ts';
+import { assignRoleApprover } from '../governance/roles.ts';
 
 const QA_SKILL = 'aialm-oss-qa-analyze';
 
@@ -144,6 +145,8 @@ export async function analyzeQa(
       else if (p.kind === 'EDGE') edge++;
       else creative++;
     }
+    // Assignee-hygiene: QA proposals posted → the QA owner must act; assign them.
+    if (posted.length > 0) await assignRoleApprover(jira, targetKey, 'qa');
     results.push({ key: targetKey, blocked: false, posted, skipped });
   }
 

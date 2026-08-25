@@ -1,4 +1,5 @@
 import { jiraConfig } from '../shared/config.ts';
+import { assertAiCommentSafe } from '../shared/ai-comment.ts';
 
 /** Minimal ADF document type (structural only). */
 export interface AdfDoc {
@@ -19,6 +20,7 @@ export function adfToPlainText(node: any): string {
   if (Array.isArray(node)) return node.map(adfToPlainText).join('');
   let out = '';
   if (typeof node.text === 'string') out += node.text;
+  if (node.type === 'emoji' && typeof node.attrs?.text === 'string') out += node.attrs.text;
   if (node.type === 'hardBreak' || node.type === 'blockquote') out += '\n';
   if (node.type === 'codeBlock') out += '\n';
   if (Array.isArray(node.content)) out += node.content.map(adfToPlainText).join('');
@@ -120,11 +122,31 @@ export class JiraClient {
     await this.req('PUT', `/rest/api/3/issue/${encodeURIComponent(key)}`, { fields });
   }
 
+  /** Clear the assignee (assignee-hygiene after an automated gate-consuming step). */
+  async unassign(issueKey: string): Promise<void> {
+    await this.req('PUT', `/rest/api/3/issue/${encodeURIComponent(issueKey)}/assignee`, {});
+  }
+
+  /** Assign an issue to a specific account (role-based approver before a gate). */
+  async assign(issueKey: string, accountId: string): Promise<void> {
+    await this.req('PUT', `/rest/api/3/issue/${encodeURIComponent(issueKey)}/assignee`, { accountId });
+  }
+
   async addComment(issueKey: string, adf: unknown): Promise<{ id: string }> {
     const r = await this.req('POST', `/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`, {
       body: adf,
     });
     return { id: String((r.data as any).id) };
+  }
+
+  /**
+   * Mandated writer for AI-authored comments. Refuses to post any text that is
+   * not marked `[AI-generated]` — guards the approval channel against a future
+   * automation step silently stealing the human approver role.
+   */
+  async addAiComment(issueKey: string, adf: unknown): Promise<{ id: string }> {
+    assertAiCommentSafe(adfToPlainText(adf));
+    return this.addComment(issueKey, adf);
   }
 
   async listComments(issueKey: string): Promise<JiraComment[]> {

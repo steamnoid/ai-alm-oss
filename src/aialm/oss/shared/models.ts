@@ -80,6 +80,8 @@ export interface ProjectAiProfile {
   prTemplate?: string;
   conventions: { coding: string[]; test: string[] };
   ciCommands: string[];
+  /** False when the repo has no GitHub Actions workflow (CI missing). */
+  hasCi?: boolean;
   docsRefs: string[];
   labelConventions: string[];
   maintainerExpectations: string[];

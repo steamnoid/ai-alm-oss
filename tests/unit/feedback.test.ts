@@ -78,3 +78,23 @@ describe('feedbackRecordComment / accessGrantComment', () => {
     expect(t).toContain('APPROVE to grant read-only visibility');
   });
 });
+
+import { fetchPrReviewComments, classifyReviewComment } from '../../src/aialm/oss/feedback/feedback.ts';
+import type { GithubClient } from '../../src/aialm/oss/github/github.ts';
+
+describe('feedback fetch + classify', () => {
+  it('fetches PR review comments and classifies them', async () => {
+    const gh = { listIssueComments: async () => [
+      { id: 11, user: { login: 'm' }, body: 'this is a bug, break', created_at: 'T' },
+      { id: 12, user: { login: 'm' }, body: 'add a unit test for it', created_at: 'T' },
+    ] } as unknown as GithubClient;
+    const comments = await fetchPrReviewComments(gh, 'acme', 'widgets', 7);
+    expect(comments).toHaveLength(2);
+    const c = classifyReviewComment('acme', 'widgets', 7, comments[0]!);
+    expect(c.ref).toBe('acme/widgets#7/comment-11');
+    expect(c.category).toBe('BUG');
+    const c2 = classifyReviewComment('acme', 'widgets', 7, comments[1]!);
+    expect(c2.category).toBe('MISSING_TEST');
+    expect(c2.needsApproval).toBe(false); // mapped to existing AC/GENERATED, no renewed approval
+  });
+});

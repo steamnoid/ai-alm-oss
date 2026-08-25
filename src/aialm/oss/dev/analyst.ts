@@ -5,6 +5,7 @@ import { MARKERS } from '../shared/markers.ts';
 import type { StatusRow } from '../shared/status.ts';
 import type { ProjectAiProfile } from '../shared/models.ts';
 import { extractAc } from '../po/work-itemize.ts';
+import { assignRoleApprover } from '../governance/roles.ts';
 
 const DEV_SKILL = 'aialm-oss-dev-analyst';
 
@@ -198,6 +199,8 @@ export async function analyzeDev(
       posted.push(id);
       existingIds.add(id);
     }
+    // Assignee-hygiene: DEV proposals posted → the DEV owner must act; assign them.
+    if (posted.length > 0) await assignRoleApprover(jira, targetKey, 'dev');
     rows.push({ target: targetKey, status: posted.length ? 'CREATED' : 'SKIPPED', detail: posted.length ? `${posted.length} proposal(s)` : rejected.length ? 'no qualifying proposals' : 'none' });
     results.push({ key: targetKey, blocked: false, posted, rejected });
   }

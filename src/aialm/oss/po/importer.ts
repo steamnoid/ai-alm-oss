@@ -1,6 +1,6 @@
 import type { JiraClient, JiraComment } from '../alm/jira.ts';
 import { type AdfNode, bullets, codeBlock, doc, para } from '../alm/adf.ts';
-import { hasHumanApprovalFor, type ApprovalComment } from '../shared/approval.ts';
+import { hasHumanApprovalFor, unassignIfAllDecided, type ApprovalComment } from '../shared/approval.ts';
 import { AI_MARK, normalize } from '../shared/identity.ts';
 import { MARKERS } from '../shared/markers.ts';
 import type { ReportStatus, StatusRow } from '../shared/status.ts';
@@ -146,6 +146,29 @@ export function workItemDescription(input: ImportInput, approved: ProposalDraft[
   return doc(...parts);
 }
 
+/** The approved-AC + traceability section appended when a candidate is upgraded in place. */
+function buildAcSection(input: ImportInput, approved: ProposalDraft[]): AdfNode[] {
+  const ref = externalRef(input.external.repo, input.external.issueNumber);
+  const parts: AdfNode[] = [para({ t: MARKERS.AC_SECTION, b: true })];
+  for (const p of approved) {
+    parts.push(codeBlock(p.gherkin));
+    parts.push(para({ t: `proposal:${p.id}`, c: true }));
+  }
+  parts.push(para({ t: `externalSource: ${input.external.provider} ${ref} — ${input.external.url}`, c: true }));
+  parts.push(para({ t: externalMarker(ref), c: true }));
+  return parts;
+}
+
+/** Merge the appended AC section into an existing description, preserving everything already there. */
+function mergeDescription(existing: unknown, appended: AdfNode[]): AdfNode {
+  const content = ((existing as { content?: unknown[] })?.content ?? []) as AdfNode[];
+  return doc(...content, ...appended);
+}
+
+function mergeLabels(existingLabels: string[] | undefined): string[] {
+  return Array.from(new Set([...(existingLabels ?? []), WORK_ITEM_LABEL, 'external']));
+}
+
 /** Import Report comment using the shared status taxonomy. */
 export function importReportComment(rows: StatusRow[]): AdfNode {
   return doc(
@@ -184,6 +207,7 @@ export async function importWorkItem(
   // Dedupe: never create a second work item for the same owner/repo#N.
   const existing = await findExistingImport(jira, input.projectKey, ref);
   if (existing) {
+    await unassignIfAllDecided(jira, input.candidateKey, comments);
     const rows: StatusRow[] = [
       { target: ref, status: 'SKIPPED', detail: `already imported as ${existing}` },
     ];
@@ -191,17 +215,23 @@ export async function importWorkItem(
     return { status: 'SKIPPED', ref, approvedCount: approved.length, workItemKey: existing, rows };
   }
 
-  // Single create.
-  const created = await jira.createIssue({
-    project: { key: input.projectKey },
-    summary: input.title,
-    issuetype: { id: '10008' }, // Task
-    description: workItemDescription(input, approved),
-    labels: [WORK_ITEM_LABEL, 'external'],
-  });
+  // Single-create via in-place upgrade: the candidate record itself becomes the
+  // governed AI-ALM Work Item. Preserves the existing qualification content and
+  // appends the approved `## Acceptance Criteria` + externalSource traceability.
+  const candidate = (await jira.getIssue(input.candidateKey, ['description', 'labels'])) as {
+    fields?: { description?: unknown; labels?: string[] };
+  };
+  const fields = candidate.fields ?? {};
+  const mergedDesc = mergeDescription(fields.description, buildAcSection(input, approved));
+  await jira.updateIssue(input.candidateKey, { description: mergedDesc, labels: mergeLabels(fields.labels) });
+
+  // Assignee-hygiene: after the import consumed the approvals, clear the assignee
+  // once no proposal remains undecided (nothing left for a human to act on).
+  await unassignIfAllDecided(jira, input.candidateKey, comments);
+
   const rows: StatusRow[] = [
-    { target: ref, status: 'CREATED', detail: created.key },
+    { target: ref, status: 'CREATED', detail: input.candidateKey },
   ];
   await jira.addComment(input.candidateKey, importReportComment(rows));
-  return { status: 'CREATED', ref, approvedCount: approved.length, workItemKey: created.key, rows };
+  return { status: 'CREATED', ref, approvedCount: approved.length, workItemKey: input.candidateKey, rows };
 }

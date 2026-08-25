@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  aiProposalIds,
+  allProposalsDecided,
   approvesProposal,
   hasHumanApprovalFor,
   rejectsProposal,
@@ -23,14 +25,23 @@ describe('approvesProposal', () => {
     expect(approvesProposal(c('APPROVE:ffffff1'), '0ab12cd')).toBe(false);
   });
 
+  it('accepts a green checkmark emoji without an id', () => {
+    expect(approvesProposal(c('✅'), '0ab12cd')).toBe(true);
+    expect(approvesProposal(c('✔️'), '0ab12cd')).toBe(true);
+    expect(approvesProposal(c('approved ✓ thx'), '0ab12cd')).toBe(true);
+  });
+
   it('never counts AI-authored comments', () => {
     expect(approvesProposal(c('APPROVE:0ab12cd', true), '0ab12cd')).toBe(false);
     expect(approvesProposal(c('[AI-generated] summary — APPROVE:0ab12cd'), '0ab12cd')).toBe(false);
+    expect(approvesProposal(c('✅', true), '0ab12cd')).toBe(false);
+    expect(approvesProposal(c('[AI-generated] ✅'), '0ab12cd')).toBe(false);
   });
 
   it('explicit trash-reject wins over approval', () => {
     expect(rejectsProposal(c('🗑️:0ab12cd'), '0ab12cd')).toBe(true);
     expect(approvesProposal(c('🗑️:0ab12cd APPROVE:0ab12cd'), '0ab12cd')).toBe(false);
+    expect(approvesProposal(c('🗑️:0ab12cd ✅'), '0ab12cd')).toBe(false);
   });
 });
 
@@ -43,5 +54,24 @@ describe('hasHumanApprovalFor', () => {
     ];
     expect(hasHumanApprovalFor(comments, '0ab12cd')).toBe(true);
     expect(hasHumanApprovalFor(comments.slice(0, 2), '0ab12cd')).toBe(false);
+  });
+});
+
+describe('aiProposalIds / allProposalsDecided', () => {
+  it('collects proposal ids only from AI proposal comments', () => {
+    const comments = [
+      c('[AI-generated] Proposal — X — aialm-oss-po-analyze:0ab12cd\nproposal:0ab12cd', true),
+      c('[AI-generated] summary Proposals: 0ab12cd, ffffff1', true), // no proposal: marker → ignored
+      c('APPROVE:0ab12cd'), // human → ignored as proposer
+    ];
+    expect(aiProposalIds(comments)).toEqual(['0ab12cd']);
+  });
+
+  it('false while a proposal is undecided, true once approved or rejected', () => {
+    const prop = c('[AI-generated] Proposal proposal:0ab12cd', true);
+    expect(allProposalsDecided([prop])).toBe(false);
+    expect(allProposalsDecided([prop, c('APPROVE:0ab12cd')])).toBe(true);
+    expect(allProposalsDecided([prop, c('🗑️:0ab12cd')])).toBe(true);
+    expect(allProposalsDecided([prop, c('✅')])).toBe(true);
   });
 });

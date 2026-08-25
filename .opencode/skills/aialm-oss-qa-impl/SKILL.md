@@ -70,3 +70,6 @@ Allow: retrieve/comment/reaction reads, target-repo read/write for tests, bash
 for running the test suite.
 MUST NOT: modify AC / QA / contract / proposals, work item state, create work
 items, or touch GitHub PR state.
+
+## V1.2 — fork feature branch
+Write tests on the FORK feature branch (`branchForWave` = aialm-oss/<repo>-<issue#>-<waveKey7>), after `syncFork` (fetch upstream → reset base → rebase); push via `httpsPushUrl` (token). NEVER touch upstream main. Agent performs repo writes; helpers plan/classify.

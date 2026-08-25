@@ -2,6 +2,7 @@ import type { JiraClient } from '../alm/jira.ts';
 import { type AdfNode, codeBlock, doc, para } from '../alm/adf.ts';
 import { proposalHeader, proposalIdFor, normalize } from '../shared/identity.ts';
 import { MARKERS } from '../shared/markers.ts';
+import { assignRoleApprover } from '../governance/roles.ts';
 
 const PREP_SKILL = 'aialm-oss-po-prep-decompose';
 
@@ -193,7 +194,7 @@ export function buildPackageComment(issueKey: string, pkg: DecompositionPackage,
     children.push(para({ t: 'Dependencies: ', b: true }, c.dependencies.join(', ') || '(none)'));
     if (c.profileNotes?.length) children.push(para({ t: 'Profile notes: ', b: true }, c.profileNotes.join('; ')));
   }
-  children.push(para('AI proposes; a human approves via ✅.'));
+  children.push(para('AI proposes; a human approves by commenting ✅ (or APPROVE:<id>).'));
   return doc(...children);
 }
 
@@ -235,5 +236,7 @@ export async function prepDecompose(
   if (dup) return { status: 'SKIPPED', packageId, childCount: input.pkg.children.length };
 
   await jira.addComment(input.workItemKey, buildPackageComment(input.workItemKey, input.pkg, packageId));
+  // Assignee-hygiene: the package proposal needs a PO decision → assign the PO owner.
+  await assignRoleApprover(jira, input.workItemKey, 'po');
   return { status: 'CREATED', packageId, childCount: input.pkg.children.length };
 }

@@ -1,5 +1,39 @@
 import { type AdfNode, doc, para } from '../alm/adf.ts';
 import type { FeedbackCategory, FeedbackRecord } from '../shared/models.ts';
+import type { GithubClient } from '../github/github.ts';
+
+/** A PR review comment from the adapter. */
+export interface PullReviewComment {
+  id: number;
+  user: string;
+  body: string;
+  created_at: string;
+}
+
+/** Fetch PR review comments via the GitHub adapter seam (PullRequestTrace → prUrl → PR number). */
+export async function fetchPrReviewComments(
+  gh: GithubClient,
+  owner: string,
+  repo: string,
+  prNumber: number,
+): Promise<PullReviewComment[]> {
+  const raw = await gh.listIssueComments(owner, repo, prNumber);
+  return raw.map(c => ({ id: c.id, user: c.user.login, body: c.body, created_at: c.created_at }));
+}
+
+export interface ClassifiedReview {
+  ref: string; // owner/repo#pr/comment-id
+  category: FeedbackCategory;
+  action: string;
+  needsApproval: boolean;
+}
+
+/** Classify a review comment into a feedback record with deterministic ref. */
+export function classifyReviewComment(owner: string, repo: string, prNumber: number, c: PullReviewComment): ClassifiedReview {
+  const category = classifyComment(c.body);
+  const d = dispositionFor(category);
+  return { ref: feedbackRef(`${owner}/${repo}`, prNumber, String(c.id)), category, action: d.action, needsApproval: d.needsApproval };
+}
 
 export interface Disposition {
   action: string;

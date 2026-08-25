@@ -54,3 +54,6 @@ on GitHub.
 ## Downstream
 
 A READY_FOR_PR verdict enables `/aialm-oss-pr`.
+
+## V1.2 — executor + CI on PR
+`runValidation(Profile.ciCommands)` executes commands via bash and returns EvidenceEntry[] (exit codes + output; result pass|fail|error) — no success claimed without real evidence. PR Actions (`pull_request`) is complementary evidence; READY_FOR_PR only when all CORE green.

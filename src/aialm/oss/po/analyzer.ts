@@ -1,6 +1,7 @@
 import type { JiraClient } from '../alm/jira.ts';
 import { type AdfNode, type AdfRun, bullets, codeBlock, doc, para } from '../alm/adf.ts';
 import { proposalHeader, proposalIdFor } from '../shared/identity.ts';
+import { assignRoleApprover } from '../governance/roles.ts';
 import type { CandidateIssue, ProjectAiProfile } from '../shared/models.ts';
 
 const PO_SKILL = 'aialm-oss-po-analyze';
@@ -81,7 +82,7 @@ export function proposalComment(issueKey: string, finding: ProposalFinding): Adf
     para(finding.why),
     para({ t: 'Proposed acceptance criteria', b: true }),
     codeBlock(finding.gherkin),
-    para('AI proposes; a human approves via ✅ on the proposal.'),
+    para('AI proposes; a human approves by commenting ✅ (or APPROVE:<id>) on the proposal.'),
   );
 }
 
@@ -167,5 +168,7 @@ export async function runAnalyze(
 
   const summary = summarize(analyze.findings);
   await jira.addComment(issueKey, summaryComment(summary));
+  // Assignee-hygiene: proposals posted → the PO owner must act; assign them.
+  if (posted.length > 0) await assignRoleApprover(jira, issueKey, 'po');
   return { blocked: false, posted, skipped, summary };
 }

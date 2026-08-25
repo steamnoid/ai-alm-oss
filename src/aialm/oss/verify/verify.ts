@@ -1,3 +1,4 @@
+import { exec as nodeExec } from 'node:child_process';
 import { type AdfNode, bullets, doc, para } from '../alm/adf.ts';
 import { proposalIdFor } from '../shared/identity.ts';
 import type { EvidenceEntry, EvidenceResult } from '../shared/models.ts';
@@ -123,4 +124,44 @@ export function verifySummaryComment(rows: { target: string; status: ChildStatus
     para({ t: `PR readiness: ${verdict.ready ? 'READY_FOR_PR' : 'NOT_READY'}`, c: true }),
     para(verdict.reason),
   );
+}
+
+export interface CommandResult {
+  exitCode: number;
+  output: string;
+  errored: boolean;
+}
+
+export type CommandRunner = (command: string, cwd?: string) => Promise<CommandResult>;
+
+const defaultRunner: CommandRunner = (command, cwd) =>
+  new Promise((resolve) => {
+    nodeExec(command, { cwd, timeout: 600_000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const code = typeof (err as NodeJS.ErrnoException | null)?.code === 'number' ? ((err as any).code as number) : err ? 1 : 0;
+      resolve({ exitCode: code, output: `${stdout ?? ''}\n${stderr ?? ''}`.trim(), errored: false });
+    });
+  });
+
+/**
+ * Execute `Profile.ciCommands` in order, capturing exit codes + output into
+ * EvidenceEntry[] (result pass|fail|error; never omits command output). No
+ * "success" is claimed without real command execution and evidence.
+ */
+export async function runValidation(
+  commands: string[],
+  opts: { cwd?: string; runner?: CommandRunner; now?: () => string } = {},
+): Promise<EvidenceEntry[]> {
+  const runner = opts.runner ?? defaultRunner;
+  const now = opts.now ?? (() => new Date().toISOString());
+  const out: EvidenceEntry[] = [];
+  for (const command of commands) {
+    try {
+      const r = await runner(command, opts.cwd);
+      const result: EvidenceResult = r.errored ? 'error' : r.exitCode === 0 ? 'pass' : 'fail';
+      out.push({ stage: 'verify', command, artifactRef: r.output.slice(0, 2000) || '(no output)', result, timestamp: now() });
+    } catch (e) {
+      out.push({ stage: 'verify', command, artifactRef: String(e).slice(0, 2000), result: 'error', timestamp: now() });
+    }
+  }
+  return out;
 }

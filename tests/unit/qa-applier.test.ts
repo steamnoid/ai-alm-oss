@@ -168,6 +168,7 @@ describe('applyApprovedQa', () => {
         getIssue: vi.fn(async (key: string) => ({ key, fields: { description: opts.descByKey?.[key] ?? targetDescription(), summary: key } })),
         listComments: vi.fn(async (key: string) => opts.commentsByKey?.[key] ?? []),
         updateIssue: vi.fn(async (key: string, fields: any) => { if (key === opts.failUpdate) throw new Error('lock'); updates.push({ key, fields }); }),
+        unassign: vi.fn(async () => {}),
         createIssue: vi.fn(async () => { creates.push('x'); return { key: 'WIDG-900' }; }),
         addComment: vi.fn(async (_k: string, adf: unknown) => { posted.push(adfToPlainText(adf)); return { id: `r${++n}` }; }),
       } as unknown as JiraClient,
