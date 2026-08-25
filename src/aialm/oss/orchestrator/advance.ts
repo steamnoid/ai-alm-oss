@@ -12,8 +12,7 @@ import { applyApprovedDev } from '../dev/applier.ts';
 import { applyApprovedReview } from '../review/review.ts';
 import { buildSelectionProposalDoc, selectionProposalId } from '../discover/discover.ts';
 import { enqueueGenerative, hasActiveJob } from './queue.ts';
-import { setStage, skillStage, approvalStageFor } from '../alm/board.ts';
-import type { BoardStage } from '../alm/board.ts';
+import { boardColumnFor, postApplyColumn, BOARD_STATUS, type BoardStatusName } from '../alm/board.ts';
 import { extractExternalRef } from '../discover/discover.ts';
 
 const PO = 'aialm-oss-po-analyze:';
@@ -264,42 +263,15 @@ function workerPool<T>(items: T[], workers: number, fn: (item: T) => Promise<voi
   return Promise.all(runners).then(() => undefined);
 }
 
-/** Normalize any timestamp into a JQL-safe `YYYY/MM/DD HH:MM` string. */
+/** Normalize any timestamp into a JQL-safe `YYYY-MM-DD HH:MM` string. */
 function jqlTimestamp(ts: string | null): string {
-  if (!ts) return '1970/01/01 00:00';
+  if (!ts) return '1970-01-01 00:00';
   const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return '1970/01/01 00:00';
+  if (Number.isNaN(d.getTime())) return '1970-01-01 00:00';
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}/${pad(d.getUTCMonth() + 1)}/${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
-
-/** Map a resolved action to the board stage it puts the issue into. */
-function stageForAction(key: string, action: OrchestratorAction): BoardStage | null {
-  switch (action.kind) {
-    case 'NONE': return null;
-    case 'GENERATE': return skillStage(action.skill);
-    case 'POST_SELECTION': return 'Candidates Pool';
-    case 'WAIT':
-      if (action.reason.includes('candidate-selection')) return 'Candidates Pool';
-      if (action.reason.includes('po proposals')) return 'Awaiting Approval (PO)';
-      if (action.reason.includes('qa')) return 'Awaiting Approval (QA)';
-      if (action.reason.includes('arch')) return 'Awaiting Approval (ARCH)';
-      if (action.reason.includes('sec')) return 'Awaiting Approval (SEC)';
-      if (action.reason.includes('dev')) return 'Awaiting Approval (DEV)';
-      return null;
-    case 'APPLY':
-      switch (action.mutator) {
-        case 'import':
-        case 'decompose': return 'Agent Working (PO Analyst)';
-        case 'qa-apply': return 'Agent Working (QA Analyst)';
-        case 'arch-apply': return 'Agent Working (ARCH Analyst)';
-        case 'sec-apply': return 'Agent Working (SEC Analyst)';
-        case 'dev-apply': return 'Agent Working (DEV Analyst)';
-      }
-      return null;
-  }
-}
 
 /** One poll pass: read the delta via the `updated`-cursor and advance each changed issue. */
 export async function advance(
@@ -351,11 +323,13 @@ export async function advance(
       results.push({ key, action: action.kind, detail });
       state.consumed.push(`${key}:${action.kind}:${detail}`);
 
-      // Board sync: reflect the pipeline stage on the Jira kanban columns (best effort).
+      // Board sync: move ticket to the right column (best effort).
       if (!dry) {
         try {
-          const stage = stageForAction(key, action);
-          if (stage) await setStage(jira, key, stage);
+          const col = boardColumnFor({ kind: action.kind, reason: action.kind === 'WAIT' ? action.reason : undefined, skill: action.kind === 'GENERATE' ? action.skill : action.kind === 'APPLY' ? action.mutator : undefined });
+          const transitions = await jira.getTransitions(key);
+          const tr = transitions.find(t => t.to?.name === col || t.name === col);
+          if (tr) await jira.transitionIssue(key, tr.id);
         } catch { /* best-effort */ }
       }
     } catch (e) {

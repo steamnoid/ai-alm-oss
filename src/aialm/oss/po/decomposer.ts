@@ -298,7 +298,7 @@ export async function decompose(jira: JiraClient, input: { parentKey: string; pr
       const created = await jira.createIssue({
         project: { key: input.projectKey },
         summary: child.title,
-        issuetype: { id: '10008' },
+        issuetype: { id: await jira.taskTypeId(input.projectKey) },
         description: buildChildDescription({ parentKey: input.parentKey, packageId, parentExternalRef: parentRef, child }),
         parent: { key: input.parentKey },
         labels: ['child', 'decomposed'],

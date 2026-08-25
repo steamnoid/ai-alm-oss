@@ -215,18 +215,7 @@ it('advance processes multiple changed issues concurrently and saves state once'
   expect(gen.mock.calls.length).toBe(0);
 });
 
-import { skillStage } from '../../src/aialm/oss/alm/board.ts';
-
-describe('board stages', () => {
-  it('maps skills to their analyst columns', () => {
-    expect(skillStage('aialm-oss-po-analyze')).toBe('Agent Working (PO Analyst)');
-    expect(skillStage('aialm-oss-qa-analyze')).toBe('Agent Working (QA Analyst)');
-    expect(skillStage('aialm-oss-arch-analyze')).toBe('Agent Working (ARCH Analyst)');
-    expect(skillStage('aialm-oss-sec-analyze')).toBe('Agent Working (SEC Analyst)');
-    expect(skillStage('aialm-oss-dev-analyst')).toBe('Agent Working (DEV Analyst)');
-    expect(skillStage('aialm-oss-pr')).toBe('Agent Working (PR)');
-  });
-
+describe('board stage mapping', () => {
   it('WAIT on po proposals maps to Awaiting Approval (PO) column', async () => {
     const { jira, byKey, comments } = mockJira();
     byKey.set('WIDG-1', issueSnap('WIDG-1', doc(para('x')), ['candidate', 'READY']));

@@ -141,6 +141,25 @@ export class JiraClient {
     return ((task.statuses ?? []) as any[]).map(s => ({ name: s.name as string, id: String(s.id) }));
   }
 
+  private taskTypeCache = new Map<string, string>();
+
+  /** Resolve an issue-type id by name within a project (e.g. "Task" → "10045"). Cached per project. */
+  async taskTypeId(projectKey: string): Promise<string> {
+    if (this.taskTypeCache.has(projectKey)) return this.taskTypeCache.get(projectKey)!;
+    const id = await this.getIssueTypeId(projectKey, 'Task');
+    this.taskTypeCache.set(projectKey, id);
+    return id;
+  }
+
+  /** Resolve an issue-type id by name within a project (e.g. "Task" → "10045"). */
+  async getIssueTypeId(projectKey: string, typeName: string): Promise<string> {
+    const r = await this.req('GET', `/rest/api/3/project/${encodeURIComponent(projectKey)}/statuses`);
+    const types = r.data as any[];
+    const hit = types.find(t => t.name === typeName);
+    if (!hit) throw new Error(`Issue type "${typeName}" not found in project ${projectKey}`);
+    return String(hit.id);
+  }
+
   /** Available workflow transitions for an issue. */
   async getTransitions(issueKey: string): Promise<{ id: string; name: string; to?: { name?: string; id?: string } }[]> {
     const r = await this.req('GET', `/rest/api/3/issue/${encodeURIComponent(issueKey)}/transitions`);

@@ -62,7 +62,7 @@ export async function runOnboard(
   const profile = await new ProfileCollector(gh).collect(input.owner, input.repo);
   const profileIssue = await jira.createIssue({
     project: { key: provision.projectKey },
-    issuetype: { id: '10008' },
+    issuetype: { id: await jira.taskTypeId(provision.projectKey) },
     summary: 'Project AI Profile',
     description: renderProfile(profile),
     labels: ['profile'],

@@ -169,7 +169,8 @@ describe('decompose orchestrator', () => {
         listComments: vi.fn(async () => opts.comments ?? []),
         searchJql: vi.fn(async () => opts.existingChildren ?? []),
         addComment: vi.fn(async (_k: string, adf: unknown) => { posted.push(adfToPlainText(adf)); return { id: `r${++n}` }; }),
-        createIssue: vi.fn(async (fields: any) => {
+        taskTypeId: vi.fn(async () => '10008'),
+      createIssue: vi.fn(async (fields: any) => {
           if (fields.summary === opts.failOn) throw new Error('fail');
           creates.push(fields);
           return { key: `WIDG-${100 + creates.length}` };

@@ -33,6 +33,7 @@ function mockJira(opts: { governance?: { key: string; adf: unknown }; lead?: str
       }),
       getIssue: vi.fn(async () => ({ fields: { description: opts.governance?.adf ?? doc(para('')) } })),
       getProject: vi.fn(async () => ({ lead: { accountId: opts.lead ?? 'LEAD1' } })),
+      taskTypeId: vi.fn(async () => '10008'),
       createIssue: vi.fn(async (fields: Record<string, unknown>) => { created.push(fields); return { key: 'WELLBEINGT-9' }; }),
       assign: vi.fn(async (key: string, accountId: string) => { assignCalls.push({ key, accountId }); }),
     } as unknown as JiraClient,

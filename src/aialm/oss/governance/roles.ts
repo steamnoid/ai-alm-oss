@@ -87,7 +87,7 @@ export async function ensureGovernanceTicket(
   const flags: GovernanceFlags = { sec: true, arch: true };
   const created = await jira.createIssue({
     project: { key: input.projectKey },
-    issuetype: { id: '10008' }, // Task
+    issuetype: { id: await jira.taskTypeId(input.projectKey) },
     summary: GOVERNANCE_TITLE,
     description: governanceDoc(roles, flags),
     labels: [GOVERNANCE_LABEL],

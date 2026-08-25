@@ -81,6 +81,7 @@ function makeHarness() {
       comments.set(key, arr);
       return { id };
     },
+    taskTypeId: async () => '10008',
     createIssue: async (fields: any) => {
       const key = `WIDG-${++counter}`;
       issues.set(key, { key, fields });

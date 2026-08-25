@@ -96,7 +96,7 @@ export async function persistCandidates(
     }
     const created = await jira.createIssue({
       project: { key: opts.projectKey },
-      issuetype: { id: '10008' }, // Task
+      issuetype: { id: await jira.taskTypeId(opts.projectKey) },
       summary: summaryForCandidate({ repo: opts.repo, number: input.number, title: input.title }),
       description: buildCandidateDoc(input),
       labels: ['candidate', input.candidate.recommendation],
@@ -109,7 +109,7 @@ export async function persistCandidates(
       para({ t: `proposal:${id}`, c: true }),
       para({ t: `${externalRef(opts.repo, input.number)} (${input.candidate.recommendation}) — ${input.title}` }),
       para(input.url),
-      para('Qualified READY — approve to execute this candidate through the governed pipeline.'),
+      para('[AI-generated] Qualified READY — approve to execute this candidate through the governed pipeline.'),
       para('AI proposes; a human approves by commenting ✅ (or APPROVE:<id>).'),
     ));
     await assignRoleApprover(jira, created.key, 'po');
@@ -131,7 +131,7 @@ export function buildSelectionProposalDoc(input: { repo: string; number: number;
     para({ t: `proposal:${id}`, c: true }),
     para({ t: `${externalRef(input.repo, input.number)} (${input.recommendation}) — ${input.title}` }),
     para(input.url),
-    para('Qualified READY — approve to execute this candidate through the governed pipeline.'),
+    para('[AI-generated] Qualified READY — approve to execute this candidate through the governed pipeline.'),
     para('AI proposes; a human approves by commenting ✅ (or APPROVE:<id>).'),
   );
 }

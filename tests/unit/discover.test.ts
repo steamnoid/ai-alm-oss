@@ -60,6 +60,7 @@ describe('persistCandidates', () => {
           fields: { description },
         })),
       ),
+      taskTypeId: vi.fn(async () => '10008'),
       createIssue: vi.fn(async (body: any) => {
         created.push(body);
         return { key: `WIDG-10${created.length}` };

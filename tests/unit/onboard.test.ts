@@ -13,7 +13,8 @@ function mockDeps(opts: { existingGovernance?: boolean } = {}) {
     getProject: vi.fn(async () => ({ name: '[AI-ALM] acme/widgets', lead: { accountId: 'LEAD1' } })),
     createKanbanProject: vi.fn(async (i: { key: string; name: string }) => ({ id: '1', key: i.key })),
     searchJql: vi.fn(async (jql: string) => (/labels = governance/.test(jql) && opts.existingGovernance ? [{ key: 'WIDG-9' }] : [])),
-    createIssue: vi.fn(async (fields: Record<string, unknown>) => {
+    taskTypeId: vi.fn(async () => '10008'),
+      createIssue: vi.fn(async (fields: Record<string, unknown>) => {
       const labels = fields.labels as string[] | undefined;
       if (labels?.includes('governance')) govCreated.push(fields);
       createdIssues.push(fields);
