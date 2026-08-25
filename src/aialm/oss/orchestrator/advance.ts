@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { JiraClient } from '../alm/jira.ts';
 import { doc, para } from '../alm/adf.ts';
+import { AI_MARK } from '../shared/identity.ts';
 import { extractAc } from '../po/work-itemize.ts';
 import { hasHumanApprovalFor, type ApprovalComment } from '../shared/approval.ts';
 import { assignRoleApprover } from '../governance/roles.ts';
@@ -115,7 +116,7 @@ async function postSelectionProposal(jira: JiraClient, act: Extract<Orchestrator
 /** Post a stage-status comment once (idempotent by its marker). */
 async function postStageStatus(jira: JiraClient, key: string, comments: { bodyText: string }[], text: string): Promise<void> {
   if (comments.some(c => c.bodyText.includes(`[status] ${text}`))) return;
-  await jira.addAiComment(key, doc(para({ t: `[status] ${text}`, c: true })));
+  await jira.addAiComment(key, doc(para({ t: `${AI_MARK} [status] ${text}`, c: true })));
 }
 
 /** Resolve the next governed action for one issue from description + comments + labels. */

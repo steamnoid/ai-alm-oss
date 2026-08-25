@@ -40,6 +40,22 @@ export function jiraConfig(): JiraConfig {
   return { site, email: requireEnv('JIRA_EMAIL'), token: requireEnv('JIRA_TOKEN') };
 }
 
+export function jiraBotConfig(): JiraConfig {
+  loadDotEnv();
+  const site = (process.env.JIRA_BOT_SITE ?? process.env.JIRA_SITE ?? '').replace(/\/$/, '');
+  if (!site) throw new Error('Missing JIRA_BOT_SITE (and fallback JIRA_SITE)');
+  const email = (process.env.JIRA_BOT_EMAIL ?? process.env.JIRA_EMAIL ?? '').trim();
+  const token = (process.env.JIRA_BOT_TOKEN ?? process.env.JIRA_TOKEN ?? '').trim();
+  if (!email || !token) throw new Error('Missing JIRA_BOT_EMAIL/JIRA_BOT_TOKEN (and fallback)');
+  return { site, email, token };
+}
+
+/** Bot-site login password for Playwright UI automation (email+password flow). */
+export function jiraBotPassword(): string {
+  loadDotEnv();
+  return (process.env.JIRA_BOT_PASSWORD ?? '').trim();
+}
+
 export interface GithubConfig {
   token: string; // may be empty — unauthenticated public-repo reads (60 req/h)
 }

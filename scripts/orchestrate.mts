@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { JiraClient } from '../src/aialm/oss/alm/jira.ts';
 import { advance } from '../src/aialm/oss/orchestrator/advance.ts';
 import { claimQueued, markDone, markFailed } from '../src/aialm/oss/orchestrator/queue.ts';
+import { jiraBotConfig, loadDotEnv } from '../src/aialm/oss/shared/config.ts';
 
 const LOCK = '.orchestrate.lock';
 
@@ -44,7 +45,13 @@ if (existsSync(LOCK)) {
   process.exit(2);
 }
 writeFileSync(LOCK, String(process.pid));
-const jira = new JiraClient();
+// The governed pipeline runs against the dedicated bot site (WELLBEINGT lives
+// on paligakrzychu.atlassian.net), so use the bot config. loadDotEnv() also
+// populates process.env with JIRA_BOT_* so "opencode run <skill>" child
+// processes (which resolve MCP env via {env:...}) inherit the bot creds.
+loadDotEnv();
+const jiraOpts = { config: jiraBotConfig() };
+const jira = new JiraClient(jiraOpts);
 
 async function poll(): Promise<void> {
   // 1) advance deterministic stages + enqueue generative jobs (never spawns agents)

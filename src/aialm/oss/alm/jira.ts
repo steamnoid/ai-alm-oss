@@ -89,12 +89,16 @@ export class JiraClient {
     const text = await res.text();
     const data = text ? (JSON.parse(text) as T) : ({} as T);
     if (!res.ok && res.status !== 204) {
+      // errorMessages is the human-readable list; errors may be `{}` (falsy once
+      // JSON.stringify'd) yet still present on the object — prefer errorMessages,
+      // fall back only to a NON-empty errors map.
+      const errorMessages = (data as any)?.errorMessages as string[] | undefined;
+      const errs = (data as any)?.errors as Record<string, unknown> | undefined;
       const detail =
-        (data as any)?.errorMessages?.join('; ') ??
-        (data as any)?.errors
-          ? JSON.stringify((data as any).errors)
-          : text.slice(0, 300);
-      throw new JiraError(res.status, path, typeof detail === 'string' ? detail : text.slice(0, 300));
+        (Array.isArray(errorMessages) && errorMessages.length ? errorMessages.join('; ') : '') ||
+        (errs && Object.keys(errs).length ? JSON.stringify(errs) : '') ||
+        text.slice(0, 300);
+      throw new JiraError(res.status, path, detail);
     }
     return { status: res.status, data };
   }
@@ -139,6 +143,54 @@ export class JiraClient {
     const types = r.data as any[];
     const task = types.find(t => t.name === 'Task') ?? types[0] ?? {};
     return ((task.statuses ?? []) as any[]).map(s => ({ name: s.name as string, id: String(s.id) }));
+  }
+
+  async getProjectId(projectKey: string): Promise<string> {
+    return String((await this.getProject(projectKey)).id);
+  }
+
+  /**
+   * Provision statuses scoped to a team-managed project (`POST /rest/api/3/statuses`).
+   * Idempotent: statuses whose name already exists are skipped. Returns created/skipped.
+   *
+   * NOTE: the project-statuses GET endpoint only reflects a team-managed project's
+   * default workflow statuses, so discovery is done by probing POST and treating the
+   * "already in use" 400 as an existing status (reliable for both fresh and reused runs).
+   */
+  async createProjectStatuses(
+    projectKey: string,
+    statuses: { name: string; statusCategory: string }[],
+  ): Promise<{ created: number; skipped: number; existing: string[] }> {
+    const projectId = await this.getProjectId(projectKey);
+    let created = 0;
+    const existing: string[] = [];
+    try {
+      await this.req('POST', '/rest/api/3/statuses', {
+        scope: { type: 'PROJECT', project: projectId },
+        statuses: statuses.map(s => ({ name: s.name, statusCategory: s.statusCategory })),
+      });
+      created = statuses.length;
+    } catch (e) {
+      // A batch POST is all-or-nothing; on partial/duplicate conflict, fall back to
+      // creating each status individually, skipping names that already exist.
+      const createOne = async (s: { name: string; statusCategory: string }): Promise<boolean> => {
+        try {
+          await this.req('POST', '/rest/api/3/statuses', {
+            scope: { type: 'PROJECT', project: projectId },
+            statuses: [s],
+          });
+          return true;
+        } catch (err) {
+          if (err instanceof JiraError && err.status === 400 && /already in use/i.test(err.detail)) return false;
+          throw err;
+        }
+      };
+      for (const s of statuses) {
+        if (await createOne(s)) created++;
+        else existing.push(s.name);
+      }
+    }
+    return { created, skipped: statuses.length - created, existing };
   }
 
   private taskTypeCache = new Map<string, string>();
@@ -231,7 +283,7 @@ export class JiraClient {
         key: input.key,
         name: input.name,
         projectTypeKey: 'software',
-        projectTemplateKey: 'com.pyxis.greenhopper.jira:gh-kanban-template',
+        projectTemplateKey: 'com.pyxis.greenhopper.jira:gh-simplified-agility-kanban',
         description: input.description ?? '',
         leadAccountId: input.leadAccountId,
         assigneeType: 'PROJECT_LEAD',

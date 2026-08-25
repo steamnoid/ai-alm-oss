@@ -21,6 +21,7 @@ import {
 } from '../../src/aialm/oss/verify/verify.ts';
 import { buildPrBody, prApproved, prGate, prWaveKey, validatePrBody } from '../../src/aialm/oss/pr/pr.ts';
 import { classifyComment, needsApproval } from '../../src/aialm/oss/feedback/feedback.ts';
+import { BOARD_STATUS, ROLE_COLUMNS, PROVISION_STATUSES } from '../../src/aialm/oss/alm/board.ts';
 import type { CandidateIssue, ProjectAiProfile } from '../../src/aialm/oss/shared/models.ts';
 
 const AC = 'Scenario: Clear password\nGiven a failed login\nThen the field is empty';
@@ -306,5 +307,17 @@ describe('aialm-oss-e2e-consistency — failure / edge matrix', () => {
     // locator appears only in the contract
     const contr = extractContract(desc);
     expect(contr.hooks).toContain('login-submit');
+  });
+
+  it('board contract: PROVISION_STATUSES covers every orchestrator stage column and is unique', () => {
+    // Every role column (except the default Done) must be provisioned.
+    const provisioned = new Set(PROVISION_STATUSES.map(s => s.name));
+    const roleWithoutDone = ROLE_COLUMNS.filter(c => c !== BOARD_STATUS.done);
+    for (const col of roleWithoutDone) expect(provisioned.has(col)).toBe(true);
+    expect(provisioned.size).toBe(roleWithoutDone.length);
+    expect(provisioned.has(BOARD_STATUS.done)).toBe(false); // Done is a default status
+    // Order: candidate gate, then PO/QA/ARCH/SEC/DEV stages, then impl tail, then Done.
+    expect(ROLE_COLUMNS[0]).toBe(BOARD_STATUS.candidates);
+    expect(ROLE_COLUMNS[ROLE_COLUMNS.length - 1]).toBe(BOARD_STATUS.done);
   });
 });

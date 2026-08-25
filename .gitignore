@@ -6,6 +6,7 @@ dist/
 *.log
 .DS_Store
 state/
+.state/
 .orchestrate.lock
 .work/
 .jira-session.json

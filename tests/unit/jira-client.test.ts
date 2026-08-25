@@ -83,6 +83,58 @@ describe('JiraClient seam', () => {
     await client.addAiComment('AIALMOSS-4', marked);
     expect(calls.length).toBeGreaterThan(0);
   });
+
+  it('createKanbanProject uses the team-managed simplified-agility template', async () => {
+    await client.createKanbanProject({ key: 'WIDGETS', name: '[AI-ALM] a/widgets', leadAccountId: 'L1' });
+    const post = calls.find(c => c.url.endsWith('/rest/api/3/project'))!;
+    const body = JSON.parse(String(post.init.body));
+    expect(body.projectTemplateKey).toBe('com.pyxis.greenhopper.jira:gh-simplified-agility-kanban');
+  });
+
+  it('createProjectStatuses POSTs scope=PROJECT and is idempotent across existing names', async () => {
+    const statuses = [{ name: 'Candidates Pool', statusCategory: 'TODO' }];
+    const postBodies: Record<string, unknown>[] = [];
+    const f = vi.fn(async (url: any, init: any = {}) => {
+      const u = String(url);
+      if (u.endsWith('/rest/api/3/project/WIDGETS')) return jsonResponse(200, { id: '42' });
+      if (u.endsWith('/rest/api/3/statuses')) {
+        postBodies.push(JSON.parse(String(init.body)));
+        // name already in use → 400 with that message
+        return jsonResponse(400, { errorMessages: ['Status name "Candidates Pool" already in use. Try a different name.'] });
+      }
+      return jsonResponse(200, {});
+    });
+    const c = new JiraClient({ config: cfg, fetchImpl: f as unknown as typeof fetch });
+    const r = await c.createProjectStatuses('WIDGETS', statuses);
+    expect(r.created).toBe(0);
+    expect(r.skipped).toBe(1);
+    expect(r.existing).toContain('Candidates Pool');
+    // Batch POST first, then per-status POST (also "already in use" → skipped).
+    expect(postBodies.length).toBeGreaterThan(0);
+    expect(postBodies[0]).toMatchObject({ scope: { type: 'PROJECT', project: '42' } });
+  });
+
+  it('createProjectStatuses POSTs statuses on a fresh project (batch succeeds)', async () => {
+    const statuses = [{ name: 'Candidates Pool', statusCategory: 'TODO' }];
+    const postBodies: Record<string, unknown>[] = [];
+    const f = vi.fn(async (url: any, init: any = {}) => {
+      const u = String(url);
+      if (u.endsWith('/rest/api/3/project/WIDGETS')) return jsonResponse(200, { id: '42' });
+      if (u.endsWith('/rest/api/3/statuses')) {
+        postBodies.push(JSON.parse(String(init.body)));
+        return jsonResponse(200, {});
+      }
+      return jsonResponse(200, {});
+    });
+    const c = new JiraClient({ config: cfg, fetchImpl: f as unknown as typeof fetch });
+    const r = await c.createProjectStatuses('WIDGETS', statuses);
+    expect(r.created).toBe(1);
+    expect(r.skipped).toBe(0);
+    expect(r.existing).toEqual([]);
+    // batch POST only (no per-status fallback)
+    expect(postBodies).toHaveLength(1);
+    expect(postBodies[0]).toMatchObject({ scope: { type: 'PROJECT', project: '42' } });
+  });
 });
 
 function makeClientWith(f: ReturnType<typeof vi.fn>) {
