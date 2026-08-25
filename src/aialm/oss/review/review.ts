@@ -59,7 +59,7 @@ export async function analyzeReview(
     const comments = await jira.listComments(targetKey);
     const existing = new Set<string>();
     for (const c of comments) {
-      const m = /\bproposal:\s*([0-9a-f]{7})\b/.exec(c.bodyText);
+      const m = /proposal:\s*([0-9a-f]{7})/.exec(c.bodyText);
       if (m) existing.add(m[1] as string);
     }
     const posted: string[] = [];
@@ -99,7 +99,7 @@ function collectApprovedReview(comments: { bodyText: string }[], kind: ReviewKin
   for (const c of comments) {
     if (!c.bodyText.includes(cfg.skill)) continue;
     if (!c.bodyText.includes('[AI-generated]')) continue;
-    const id = /\bproposal:\s*([0-9a-f]{7})\b/.exec(c.bodyText)?.[1];
+    const id = /proposal:\s*([0-9a-f]{7})/.exec(c.bodyText)?.[1];
     if (!id) continue;
     if (!hasHumanApprovalFor(human, id)) continue;
     const title = labelRe.exec(c.bodyText)?.[1]?.trim() ?? '';

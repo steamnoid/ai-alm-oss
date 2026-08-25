@@ -36,6 +36,6 @@ export function proposalFooter(id: string): string {
 
 /** Extract proposal:<id> footer id from a text body, if present. */
 export function extractFooterId(body: string): string | null {
-  const m = /proposal:\s*([0-9a-f]{7})\b/.exec(body);
+  const m = /proposal:\s*([0-9a-f]{7})/.exec(body);
   return m ? (m[1] as string) : null;
 }

@@ -20,7 +20,9 @@ const REJECT_RE = /🗑️\s*[:#]?\s*([0-9a-f]{7})\b/;
 // Green-check approvals: ✅ (white bird in green square), ✔, ✓. A human check
 // approves without needing an explicit proposal id.
 const APPROVE_EMOJI = /[\u2705\u2714\u2713]/;
-const PROPOSAL_MARKER_RE = /\bproposal:\s*([0-9a-f]{7})\b/g;
+// No leading \b: adfToPlainText glues paragraphs ("…:<id>proposal:<id>…"), so a
+// word boundary before "proposal" is not guaranteed.
+const PROPOSAL_MARKER_RE = /proposal:\s*([0-9a-f]{7})/g; // no \b — adfToPlainText glues paragraphs
 
 function extractId(re: RegExp, body: string): string | null {
   const m = re.exec(body);

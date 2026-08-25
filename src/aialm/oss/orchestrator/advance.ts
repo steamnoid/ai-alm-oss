@@ -75,7 +75,9 @@ function approvedIds(comments: { bodyText: string }[], marker: string): string[]
   const ids = new Set<string>();
   for (const c of comments) {
     if (!c.bodyText.includes(marker)) continue;
-    const m = /\bproposal:\s*([0-9a-f]{7})\b/.exec(c.bodyText);
+    // NOTE: no leading \b — adfToPlainText glues paragraphs together, so the
+    // marker often appears mid-word ("…:<id>proposal:<id>…") and \b would never match.
+    const m = /proposal:\s*([0-9a-f]{7})/.exec(c.bodyText);
     if (m && hasHumanApprovalFor(hs, m[1] as string)) ids.add(m[1] as string);
   }
   return [...ids];

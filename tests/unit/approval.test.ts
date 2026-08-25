@@ -74,4 +74,12 @@ describe('aiProposalIds / allProposalsDecided', () => {
     expect(allProposalsDecided([prop, c('🗑️:0ab12cd')])).toBe(true);
     expect(allProposalsDecided([prop, c('✅')])).toBe(true);
   });
+
+  it('parses the marker when adfToPlainText glues paragraphs together (no separator)', () => {
+    // Real-world regression: "…aialm-oss-discover:<id>" + "proposal:<id>" render as
+    // one glued string ("…<id>proposal:<id>…"), so a leading \b would never match.
+    const glued = c('[AI-generated] Proposal — X — aialm-oss-discover:0ab12cdproposal:0ab12cdacme/widgets', true);
+    expect(aiProposalIds([glued])).toEqual(['0ab12cd']);
+    expect(hasHumanApprovalFor([glued, c('✅')], '0ab12cd')).toBe(true);
+  });
 });
