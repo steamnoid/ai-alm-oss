@@ -3,6 +3,9 @@ name: aialm-oss-sec-analyze
 description: Propose Security Review findings for a target (assigns SEC role, falls back to DEV with a note when the sec flag is off).
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-sec-analyze
 
 Propose security findings (auth/crypto/secrets/input handling) derived from approved Product AC + the codebase — never inventing a concern.

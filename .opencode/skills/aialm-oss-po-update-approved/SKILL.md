@@ -3,6 +3,9 @@ name: aialm-oss-po-update-approved
 description: Convert an approved external candidate into a real, governed AI-ALM Work Item (DOCK external → internal) with approved Product AC and full externalSource traceability. Use after a po-analyze proposal is human-approved.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-po-update-approved
 
 The only skill that turns an approved candidate into a governed AI-ALM Work Item.

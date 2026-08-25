@@ -22,6 +22,7 @@ function mockJira() {
       }),
       // mutators' deps
       addComment: vi.fn(async () => ({ id: 'c' })),
+      addAiComment: vi.fn(async () => ({ id: 's' })),
       updateIssue: vi.fn(async () => {}),
       createIssue: vi.fn(async () => ({ key: 'CHILD-1' })),
       unassign: vi.fn(async () => {}),
@@ -36,9 +37,32 @@ function mockJira() {
 const AC = 'Scenario: Selected event is visually marked\nGiven events listed\nWhen I click Select\nThen it is marked';
 
 describe('resolveNext', () => {
-  it('candidate with no proposals → GENERATE po-analyze', async () => {
+  it('candidate without a selection proposal → GENERATE discover (selection gate)', async () => {
+    const { jira, byKey } = mockJira();
+    byKey.set('WIDG-1', issueSnap('WIDG-1', doc(para('x')), ['candidate', 'READY']));
+    const a = await resolveNext(jira, { projectKey: 'WIDG', issueKey: 'WIDG-1' });
+    expect(a.kind).toBe('GENERATE');
+    expect((a as any).skill).toBe('aialm-oss-discover');
+  });
+
+  it('candidate with unapproved selection proposal → WAIT (backlog, no auto po-analyze)', async () => {
     const { jira, byKey, comments } = mockJira();
     byKey.set('WIDG-1', issueSnap('WIDG-1', doc(para('x')), ['candidate', 'READY']));
+    comments.set('WIDG-1', [
+      { id: 'ai', bodyText: '[AI-generated] Proposal aialm-oss-discover:dddd111 proposal:dddd111' },
+      { id: 'h0', bodyText: 'looks interesting' }, // no decision
+    ]);
+    const a = await resolveNext(jira, { projectKey: 'WIDG', issueKey: 'WIDG-1' });
+    expect(a.kind).toBe('WAIT');
+  });
+
+  it('candidate with approved selection proposal but no po proposals → GENERATE po-analyze', async () => {
+    const { jira, byKey, comments } = mockJira();
+    byKey.set('WIDG-1', issueSnap('WIDG-1', doc(para('x')), ['candidate', 'READY']));
+    comments.set('WIDG-1', [
+      { id: 'sel', bodyText: '[AI-generated] Proposal aialm-oss-discover:dddd111 proposal:dddd111' },
+      { id: 'h0', bodyText: 'APPROVE:dddd111' },
+    ]);
     const a = await resolveNext(jira, { projectKey: 'WIDG', issueKey: 'WIDG-1' });
     expect(a.kind).toBe('GENERATE');
     expect((a as any).skill).toBe('aialm-oss-po-analyze');
@@ -48,6 +72,8 @@ describe('resolveNext', () => {
     const { jira, byKey, comments } = mockJira();
     byKey.set('WIDG-1', issueSnap('WIDG-1', doc(para('x'), para({ t: 'aialm-external: acme/widgets#12', c: true })), ['candidate', 'READY']));
     comments.set('WIDG-1', [
+      { id: 'sel', bodyText: '[AI-generated] Proposal aialm-oss-discover:dddd111 proposal:dddd111' },
+      { id: 'h0', bodyText: 'APPROVE:dddd111' },
       { id: 'ai', bodyText: '[AI-generated] Proposal aialm-oss-po-analyze:8d1e8e8 proposal:8d1e8e8' },
       { id: 'h', bodyText: 'APPROVE:8d1e8e8' },
     ]);
@@ -127,7 +153,7 @@ describe('advance', () => {
     expect(res.scanned).toBeGreaterThanOrEqual(1);
     expect(res.actions.length).toBeGreaterThanOrEqual(1);
     const a = res.actions[0]!;
-    expect(a.detail).toBe('dry:aialm-oss-po-analyze:WIDG-1');
+    expect(a.detail).toBe('dry:aialm-oss-discover:WIDG-1');
   });
 
   it('fault isolation: one erroring issue does not stop the pass', async () => {
@@ -185,5 +211,6 @@ it('advance processes multiple changed issues concurrently and saves state once'
   const keys = res.actions.map(a => a.key);
   expect(keys).toContain('WIDG-1');
   expect(keys).toContain('WIDG-2');
-  expect(gen.mock.calls.length).toBeGreaterThanOrEqual(2);
+  // dry never launches the generative runner
+  expect(gen.mock.calls.length).toBe(0);
 });

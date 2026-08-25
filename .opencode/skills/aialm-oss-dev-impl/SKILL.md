@@ -3,6 +3,9 @@ name: aialm-oss-dev-impl
 description: Materialize approved Product AC and Implementation Contract into application feature code in the target OSS repository, under a frozen contract shared with aialm-oss-qa-impl. Use after aialm-oss-dev-update-approved.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-dev-impl
 
 Materialize approved Product AC and Implementation Contract into application code

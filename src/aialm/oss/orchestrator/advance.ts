@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { JiraClient } from '../alm/jira.ts';
+import { doc, para } from '../alm/adf.ts';
 import { extractAc } from '../po/work-itemize.ts';
 import { hasHumanApprovalFor, type ApprovalComment } from '../shared/approval.ts';
 import { importWorkItem } from '../po/importer.ts';
@@ -83,6 +84,12 @@ function refOf(description: unknown): string {
   return extractExternalRef(JSON.stringify(description ?? {})) ?? '';
 }
 
+/** Post a stage-status comment once (idempotent by its marker). */
+async function postStageStatus(jira: JiraClient, key: string, comments: { bodyText: string }[], text: string): Promise<void> {
+  if (comments.some(c => c.bodyText.includes(`[status] ${text}`))) return;
+  await jira.addAiComment(key, doc(para({ t: `[status] ${text}`, c: true })));
+}
+
 /** Resolve the next governed action for one issue from description + comments + labels. */
 export async function resolveNext(
   jira: JiraClient,
@@ -96,14 +103,30 @@ export async function resolveNext(
   const labels = new Set(fields.labels ?? []);
   const description = fields.description;
   const hasAc = extractAc(description).length > 0;
-  const isTracked = labels.has('candidate') || labels.has('external') || labels.has('work-item');
+  // Only governed artifacts are advanced: candidates, work items and their
+  // functional children. Everything else (Profile, Governance, CI tickets…) is
+  // not the orchestrator's business.
+  const isTracked = ['candidate', 'external', 'work-item', 'child', 'decomposed'].some(l => labels.has(l));
+  if (!isTracked) return { kind: 'NONE' };
 
   if (!hasAc && isTracked) {
     const comments = await jira.listComments(key);
+    // Candidate selection gate (same convention as every other gate): the
+    // pipeline never starts an un-approved candidate.
+    if (!hasMarker(comments, 'aialm-oss-discover:')) {
+      return { kind: 'GENERATE', skill: 'aialm-oss-discover', targetKey: key, repoRef: refOf(description) };
+    }
+    if (approvedIds(comments, 'aialm-oss-discover:').length === 0) {
+      await postStageStatus(jira, key, comments, 'awaiting candidate-selection approval — comment ✅ or APPROVE:<id> on the selection proposal');
+      return { kind: 'WAIT', reason: 'awaiting candidate-selection approval (APPROVE/✅)' };
+    }
     if (approvedIds(comments, PO).length > 0) {
       return { kind: 'APPLY', mutator: 'import', targetKey: key, projectKey: input.projectKey, ref: refOf(description) };
     }
-    if (hasMarker(comments, PO)) return { kind: 'WAIT', reason: 'po proposals present, await approval' };
+    if (hasMarker(comments, PO)) {
+      await postStageStatus(jira, key, comments, 'awaiting your approval on the AC proposal(s) — comment ✅ or APPROVE:<id>');
+      return { kind: 'WAIT', reason: 'po proposals present, await approval' };
+    }
     return { kind: 'GENERATE', skill: 'aialm-oss-po-analyze', targetKey: key, repoRef: refOf(description) };
   }
 
@@ -220,7 +243,7 @@ export async function advance(
   const { projectKey, dry = false, runGenerative, workers = 4 } = input;
   const state = loadState(projectKey);
   const cursor = input.cursorOverride ?? state.cursor ?? '';
-  const jql = `project = ${projectKey} AND updated >= "${cursor || '1970-01-01 00:00 +0000'}" ORDER BY updated ASC`;
+  const jql = `project = ${projectKey} AND updated >= "${cursor || '1970-01-01 00:00'}" ORDER BY updated ASC`;
   const issues = await jira.searchJql(jql, ['key', 'summary', 'description', 'labels', 'updated']);
   const actions: AdvanceResult['actions'] = [];
   let maxUpdated = cursor;
@@ -249,7 +272,7 @@ export async function advance(
       let detail = '';
       if (action.kind === 'WAIT') detail = `wait:${action.reason}`;
       else if (action.kind === 'APPLY') detail = await applyDeterministic(jira, action, dry);
-      else detail = runGenerative ? await runGenerative(action) : dry ? `dry:${action.skill}:${action.targetKey}` : `skip-generative:${action.skill}`;
+      else detail = dry ? `dry:${action.skill}:${action.targetKey}` : runGenerative ? await runGenerative(action) : `skip-generative:${action.skill}`;
       results.push({ key, action: action.kind, detail });
       state.consumed.push(`${key}:${action.kind}:${detail}`);
     } catch (e) {

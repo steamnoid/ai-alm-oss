@@ -3,6 +3,9 @@ name: aialm-oss-feedback
 description: Classify maintainer PR review feedback into first-class ALM records, derive requirement deltas where legitimate, require renewed human approval for scope changes, and drive a governed correction cycle. Use after a PR is opened and receives review.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-feedback
 
 Treat external maintainer feedback as a first-class ALM artifact. Classify it,

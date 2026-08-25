@@ -49,7 +49,7 @@ writeFileSync(LOCK, String(process.pid));
 const jira = new JiraClient();
 
 async function poll(): Promise<void> {
-  const res = await advance(jira, { projectKey, dry, runGenerative, workers });
+  const res = await advance(jira, { projectKey, dry, runGenerative: dry ? undefined : runGenerative, workers });
   console.log(`[${new Date().toISOString()}] ${projectKey} scanned=${res.scanned} actions=${res.actions.length} cursor=${res.cursor ?? '(none)'}`);
   for (const a of res.actions) console.log(`   ${a.key} -> ${a.action}: ${a.detail}`);
 }

@@ -3,6 +3,9 @@ name: aialm-oss-po-analyze
 description: Analyze ONE READY candidate issue for implementability and propose testable Product AC as plain-English Gherkin plus an execution plan sketch. Use after a candidate is READY to feed the QA/dev pipeline.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-po-analyze
 
 Analyze one READY candidate issue into atomic, human-approvable proposal

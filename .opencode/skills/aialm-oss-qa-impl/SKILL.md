@@ -3,6 +3,9 @@ name: aialm-oss-qa-impl
 description: Materialize approved GENERATED behavioral scenarios into executable tests in the target OSS repository, using the frozen Implementation Contract for technical hooks. Use after aialm-oss-qa-update-approved and aialm-oss-dev-update-approved.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-qa-impl
 
 Materialize approved GENERATED behavioral scenarios into executable tests in the

@@ -3,6 +3,9 @@ name: aialm-oss-project-onboard
 description: Onboard a public OSS repo — provision its private Jira tracking project and build the Project AI Profile from public artifacts. Run this before any discovery or execution on a new repository.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-project-onboard
 
 Before selecting or executing any work item, reconstruct the target

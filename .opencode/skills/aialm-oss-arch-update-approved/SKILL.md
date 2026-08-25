@@ -3,6 +3,9 @@ name: aialm-oss-arch-update-approved
 description: Apply approved Architecture Review into the target description (## Architecture Review + ARCH hash).
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-arch-update-approved
 
 Merge human-approved `aialm-oss-arch-analyze` proposals into the target's OWN description.

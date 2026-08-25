@@ -3,6 +3,9 @@ name: aialm-oss-po-decompose
 description: Turn the latest human-approved decomposition package into real ALM child work items linked to the imported parent. The only skill that creates functional children. Use after a decomposition package is approved.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-po-decompose
 
 Create real functional child work items from the latest human-approved

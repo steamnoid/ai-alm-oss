@@ -3,6 +3,9 @@ name: aialm-oss-dev-analyst
 description: For each functional child with approved Product AC and non-empty GENERATED QA, propose concrete, human-approvable implementation/testability contract details. Use after QA GENERATED exists and before aialm-oss-dev-update-approved.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-dev-analyst
 
 Propose concrete Implementation Contract details (stable seams/test hooks) so a

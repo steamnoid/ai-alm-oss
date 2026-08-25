@@ -3,6 +3,9 @@ name: aialm-oss-po-prep-decompose
 description: Propose how to split one sufficiently specified AI-ALM Work Item into independently implementable functional children (a single decomposition package). Does not create work items. Use after a work item has approved Product AC.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-po-prep-decompose
 
 Propose a single decomposition package for one AI-ALM Work Item. Never creates

@@ -3,6 +3,9 @@ name: aialm-oss-discover
 description: Scan open issues of an onboarded public OSS repo and persist qualified candidates with recommendation labels into its Jira tracking project. Use after onboarding a repo to find candidate work items.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-discover
 
 Scan the public issue space of an onboarded repository and identify candidate

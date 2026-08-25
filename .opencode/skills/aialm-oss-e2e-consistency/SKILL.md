@@ -3,6 +3,9 @@ name: aialm-oss-e2e-consistency
 description: Deterministic unit/integration verification suite proving the full governed issue-to-PR workflow and cross-skill contracts, including the external dock, the parallel qa∥dev battle test, and end-to-end traceability. Run after any V1 skill change.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-e2e-consistency
 
 Verify the full governed issue-to-PR workflow and cross-skill contracts with

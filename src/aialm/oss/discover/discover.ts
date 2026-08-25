@@ -1,5 +1,7 @@
-import type { JiraClient } from '../alm/jira.ts';
-import { bullets, codeBlock, doc, para } from '../alm/adf.ts';
+import { JiraClient } from '../alm/jira.ts';
+import { bullets, codeBlock, doc, para, type AdfNode } from '../alm/adf.ts';
+import { proposalHeader, proposalIdFor } from '../shared/identity.ts';
+import { assignRoleApprover } from '../governance/roles.ts';
 import type { CandidateIssue } from '../shared/models.ts';
 
 export function externalRef(repo: string, number: number): string {
@@ -99,7 +101,37 @@ export async function persistCandidates(
       description: buildCandidateDoc(input),
       labels: ['candidate', input.candidate.recommendation],
     });
+    // Candidate selection gate (same convention as every other gate):
+    // a proposal the human must approve before po-analyze runs.
+    const id = selectionProposalId({ repo: opts.repo, number: input.number, recommendation: input.candidate.recommendation });
+    await jira.addComment(created.key, doc(
+      para({ t: proposalHeader(created.key, 'aialm-oss-discover', id), b: true }),
+      para({ t: `proposal:${id}`, c: true }),
+      para({ t: `${externalRef(opts.repo, input.number)} (${input.candidate.recommendation}) — ${input.title}` }),
+      para(input.url),
+      para('Qualified READY — approve to execute this candidate through the governed pipeline.'),
+      para('AI proposes; a human approves by commenting ✅ (or APPROVE:<id>).'),
+    ));
+    await assignRoleApprover(jira, created.key, 'po');
     result.created.push({ ref, key: created.key });
   }
   return result;
+}
+
+
+/** Candidate selection gate — one proposal per candidate (same convention as other gates). */
+export function selectionProposalId(input: { repo: string; number: number; recommendation: string }): string {
+  return proposalIdFor(`candidate-selection\n${input.repo}\n${input.number}\n${input.recommendation}`);
+}
+
+export function buildSelectionProposalDoc(input: { repo: string; number: number; title: string; url: string; recommendation: string }): AdfNode {
+  const id = selectionProposalId({ repo: input.repo, number: input.number, recommendation: input.recommendation });
+  return doc(
+    para({ t: `[AI-generated] Proposal — candidate selection — aialm-oss-discover:${id}`, b: true }),
+    para({ t: `proposal:${id}`, c: true }),
+    para({ t: `${externalRef(input.repo, input.number)} (${input.recommendation}) — ${input.title}` }),
+    para(input.url),
+    para('Qualified READY — approve to execute this candidate through the governed pipeline.'),
+    para('AI proposes; a human approves by commenting ✅ (or APPROVE:<id>).'),
+  );
 }

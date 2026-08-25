@@ -3,6 +3,9 @@ name: aialm-oss-dev-update-approved
 description: Batch human-approved implementation/testability proposals into the canonical ## Implementation Contract section inside each functional child's own description. Use after dev-analyst proposals are approved, before aialm-oss-qa-impl / aialm-oss-dev-impl.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-dev-update-approved
 
 Merge approved Implementation Contract entries into the canonical

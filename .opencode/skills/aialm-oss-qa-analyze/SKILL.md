@@ -3,6 +3,9 @@ name: aialm-oss-qa-analyze
 description: Derive testable, behavioral QA scenarios from approved Product AC as atomic QA Proposal comments. Exclusive subticket mode when the work item has children. Use after a work item has approved Product AC.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-qa-analyze
 
 Derive behavioral QA scenarios (Gherkin) from approved Product AC. Never modify

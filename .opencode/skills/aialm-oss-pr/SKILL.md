@@ -3,6 +3,9 @@ name: aialm-oss-pr
 description: Create the public GitHub Pull Request only after verification READY_FOR_PR and an explicit human approval gate, with a fully traceable and honestly disclosed body. Use after aialm-oss-verify.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-pr
 
 Create the public GitHub PR only after successful verification AND explicit

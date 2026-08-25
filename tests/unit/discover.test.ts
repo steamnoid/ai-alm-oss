@@ -62,8 +62,11 @@ describe('persistCandidates', () => {
       ),
       createIssue: vi.fn(async (body: any) => {
         created.push(body);
-        return { key: `X-NEW-${created.length}` };
+        return { key: `WIDG-10${created.length}` };
       }),
+      addComment: vi.fn(async () => ({ id: 'c1' })),
+      assign: vi.fn(async () => {}),
+      getProject: vi.fn(async () => ({ lead: { accountId: 'LEAD1' } })),
     } as unknown as JiraClient & { createIssue: any };
     return { jira, created };
   }

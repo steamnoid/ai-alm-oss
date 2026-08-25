@@ -3,6 +3,9 @@ name: aialm-oss-sec-update-approved
 description: Apply approved Security Review into the target description (## Security Review + SEC hash).
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-sec-update-approved
 
 Merge human-approved `aialm-oss-sec-analyze` proposals into the target's OWN description.

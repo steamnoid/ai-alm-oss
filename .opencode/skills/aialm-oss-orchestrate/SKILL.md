@@ -3,6 +3,9 @@ name: aialm-oss-orchestrate
 description: Run the governed background gate-advance poller for a repo project (daemon); advances stages on human approvals.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-orchestrate
 
 Long-running daemon that polls Jira for a repo project and advances the governed pipeline one stage at a time, idempotently and without invention. Humans only act at gates.

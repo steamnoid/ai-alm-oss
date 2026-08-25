@@ -3,6 +3,9 @@ name: aialm-oss-qa-update-approved
 description: Batch human-approved QA proposals into the canonical behavioral GENERATED specification inside each analyzed target's OWN description. Use after QA proposals are approved and before aialm-oss-qa-impl.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-qa-update-approved
 
 Merge approved QA scenarios into the canonical `GENERATED QA` block inside each

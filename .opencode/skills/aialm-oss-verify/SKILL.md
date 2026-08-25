@@ -3,6 +3,9 @@ name: aialm-oss-verify
 description: Run the target repository's validation commands against the delivery wave and produce auditable, machine-checkable evidence that the change is PR-ready. Use after aialm-oss-qa-impl / aialm-oss-dev-impl, before aialm-oss-pr.
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-verify
 
 Run the target repository's relevant validation commands (from Project AI

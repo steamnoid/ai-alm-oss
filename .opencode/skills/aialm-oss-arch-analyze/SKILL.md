@@ -3,6 +3,9 @@ name: aialm-oss-arch-analyze
 description: Propose Architecture Review findings (assigns ARCH role, falls back to DEV when the arch flag is off).
 ---
 
+> **Backend:** Jira Cloud only — use the `jira_jira_*` MCP tools (or `JiraClient`). NEVER use the Plane MCP (`plane_*`) — it is a retired read-only archive.
+
+
 # aialm-oss-arch-analyze
 
 Propose architecture-boundary findings from approved AC + codebase — never inventing a concern.
