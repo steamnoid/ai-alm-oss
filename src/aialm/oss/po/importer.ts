@@ -1,7 +1,7 @@
 import type { JiraClient, JiraComment } from '../alm/jira.ts';
 import { type AdfNode, bullets, codeBlock, doc, para } from '../alm/adf.ts';
 import { hasHumanApprovalFor, unassignIfAllDecided, type ApprovalComment } from '../shared/approval.ts';
-import { AI_MARK, normalize } from '../shared/identity.ts';
+import { AI_MARK, normalize, isAiMarked} from '../shared/identity.ts';
 import { MARKERS } from '../shared/markers.ts';
 import type { ReportStatus, StatusRow } from '../shared/status.ts';
 import type { ExternalSource } from '../shared/models.ts';
@@ -85,13 +85,13 @@ export function extractProposals(comments: JiraComment[]): ProposalDraft[] {
     if (!id) continue;
     const gherkin = findCodeBlock(c.bodyAdf) ?? gherkinFromText(c.bodyText);
     if (!gherkin) continue;
-    out.push({ id, gherkin, aiGenerated: c.bodyText.includes(AI_MARK) });
+    out.push({ id, gherkin, aiGenerated: isAiMarked(c.bodyText) });
   }
   return out;
 }
 
 function toApprovalComment(c: JiraComment): ApprovalComment {
-  return { id: c.id, body: c.bodyText, isAiGenerated: c.bodyText.includes(AI_MARK) };
+  return { id: c.id, body: c.bodyText, isAiGenerated: isAiMarked(c.bodyText) };
 }
 
 /**

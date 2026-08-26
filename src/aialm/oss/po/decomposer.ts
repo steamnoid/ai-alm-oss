@@ -1,10 +1,11 @@
 import type { JiraClient, JiraComment } from '../alm/jira.ts';
 import { type AdfNode, bullets, codeBlock, doc, para } from '../alm/adf.ts';
 import { hasHumanApprovalFor, unassignIfAllDecided, type ApprovalComment } from '../shared/approval.ts';
-import { normalize } from '../shared/identity.ts';
+import { normalize, isAiMarked} from '../shared/identity.ts';
 import { MARKERS } from '../shared/markers.ts';
 import type { StatusRow } from '../shared/status.ts';
 import type { ChildSpec, DecompositionPackage, ValidationResult } from './work-itemize.ts';
+import { packageProposalId } from './work-itemize.ts';
 import { externalMarker, extractExternalRef } from '../discover/discover.ts';
 
 const PROPOSAL_ID_RE = /(?:proposal|aialm-oss-po-prep-decompose):\s*([0-9a-f]{7})/;
@@ -46,7 +47,7 @@ function splitList(s: string): string[] {
 }
 
 function toApprovalComment(c: JiraComment): ApprovalComment {
-  return { id: c.id, body: c.bodyText, isAiGenerated: c.bodyText.includes('[AI-generated]') };
+  return { id: c.id, body: c.bodyText, isAiGenerated: isAiMarked(c.bodyText) };
 }
 
 function extractProposalId(text: string): string | null {
@@ -66,6 +67,10 @@ export function parsePackageComment(
   const content = ((comment.bodyAdf as { content?: unknown[] })?.content ?? []) as { type?: string }[];
   const children: ChildSpec[] = [];
   let cur: ChildSpec | null = null;
+  let sawCanonicalChild = false;
+  // Tolerant fallback: agents sometimes write "C1 — Title" instead of the
+  // canonical "child: <key>" line; accept both as child starts.
+  const FALLBACK_CHILD_RE = /^C\d+\s*[—–-]\s*(.+)$/;
   for (const node of content) {
     if (node.type === 'codeBlock') {
       if (cur) cur.acceptanceCriteria.push(nodeText(node).trim());
@@ -73,9 +78,17 @@ export function parsePackageComment(
     }
     const t = nodeText(node).trim();
     if (t.startsWith('child:')) {
+      sawCanonicalChild = true;
       if (cur) children.push(cur);
       cur = { childKey: t.slice(6).trim(), title: '', goal: '', scope: [], acceptanceCriteria: [], sourceProductAcRefs: [], dependencies: [] };
       continue;
+    }
+    if (!cur && !sawCanonicalChild) {
+      const fb = FALLBACK_CHILD_RE.exec(t);
+      if (fb) {
+        cur = { childKey: (fb[1] as string).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40), title: (fb[1] as string).trim(), goal: '', scope: [], acceptanceCriteria: [], sourceProductAcRefs: [], dependencies: [] };
+        continue;
+      }
     }
     if (!cur) continue;
     if (t.startsWith('Title: ')) cur.title = t.slice(7).trim();
@@ -244,6 +257,88 @@ export function decomposeReportComment(rows: StatusRow[]): AdfNode {
   );
 }
 
+function extractAcFromParent(description: unknown): string[] {
+  if (!description) return [];
+  const adfAc = extractAcFromAdf(description);
+  if (adfAc.length > 0) return adfAc;
+  const text = nodeText(description);
+  const parts = text.match(/Scenario:[\s\S]*?(?=Scenario:|$)/g);
+  return parts ? parts.map(p => p.trim()).filter(Boolean) : [];
+}
+
+function extractAcFromAdf(description: unknown): string[] {
+  const out: string[] = [];
+  let inAc = false;
+  (function walk(n: unknown): void {
+    if (n == null) return;
+    const node = n as { type?: string; text?: unknown; content?: unknown[] };
+    if (typeof node.text === 'string' && node.text.includes('## Acceptance Criteria')) inAc = true;
+    if (inAc && node.type === 'codeBlock') {
+      const t = nodeText(n).trim();
+      if (t) out.push(t);
+    }
+    if (Array.isArray(node.content)) node.content.forEach(walk);
+  })(description);
+  return out;
+}
+
+
+
+async function createChildrenFromPackage(
+  jira: JiraClient,
+  input: { parentKey: string; projectKey: string },
+  pkg: DecompositionPackage,
+  packageId: string,
+  parentRef: string,
+  isSynthetic: boolean,
+): Promise<DecomposeResult> {
+  const existingChildren = await findExistingChildren(jira, input.projectKey, input.parentKey);
+  const existing = filterExistingPayloads(pkg, packageId, existingChildren);
+  const order = topoOrder(pkg.children) ?? pkg.children;
+  const keyByChildKey = new Map(existing.existingKey);
+  const failedKeys = new Set<string>();
+  const outcomes: ChildOutcome[] = [];
+  for (const child of order) {
+    if (existing.alreadyCreated.has(child.childKey)) {
+      outcomes.push({ childKey: child.childKey, status: 'SKIPPED', key: existing.existingKey.get(child.childKey), detail: 'already created' });
+      continue;
+    }
+    const blockedByDep = child.dependencies.find(d => failedKeys.has(d));
+    if (blockedByDep) {
+      outcomes.push({ childKey: child.childKey, status: 'NOT_ATTEMPTED', detail: `dependency ${blockedByDep} failed` });
+      continue;
+    }
+    try {
+      let subtaskTypeId: string;
+      try {
+        subtaskTypeId = await jira.getIssueTypeId(input.projectKey, 'Subtask');
+      } catch {
+        subtaskTypeId = await jira.taskTypeId(input.projectKey);
+      }
+      const created = await jira.createIssue({
+        project: { key: input.projectKey },
+        summary: child.title,
+        issuetype: { id: subtaskTypeId },
+        description: buildChildDescription({ parentKey: input.parentKey, packageId, parentExternalRef: parentRef, child }),
+        parent: { key: input.parentKey },
+        labels: ['child', 'decomposed'],
+      });
+      keyByChildKey.set(child.childKey, created.key as string);
+      outcomes.push({ childKey: child.childKey, status: 'CREATED', key: created.key as string });
+    } catch (e) {
+      failedKeys.add(child.childKey);
+      outcomes.push({ childKey: child.childKey, status: 'FAILED', detail: (e as Error).message });
+    }
+  }
+  const rows: StatusRow[] = outcomes.map(o => ({ target: o.childKey, status: o.status, detail: o.key ?? o.detail }));
+  await jira.addComment(input.parentKey, decomposeReportComment(rows));
+  await unassignIfAllDecided(jira, input.parentKey, await jira.listComments(input.parentKey));
+  const anyBad = outcomes.some(o => o.status === 'FAILED' || o.status === 'NOT_ATTEMPTED');
+  const allSkipped = outcomes.length > 0 && outcomes.every(o => o.status === 'SKIPPED');
+  const status: DecomposeResult['status'] = anyBad ? 'PARTIAL' : allSkipped ? 'SKIPPED' : 'CREATED';
+  return { status, parentKey: input.parentKey, packageId, outcomes, rows };
+}
+
 async function findExistingChildren(jira: JiraClient, projectKey: string, parentKey: string): Promise<ExistingChild[]> {
   const issues = await jira.searchJql(`project = ${projectKey} AND parent = ${parentKey}`, ['key', 'summary', 'description']);
   return issues.map(it => ({
@@ -258,7 +353,7 @@ async function findExistingChildren(jira: JiraClient, projectKey: string, parent
  * Sequential create (decor order) — no parallel; idempotent; partial-failure aware.
  */
 export async function decompose(jira: JiraClient, input: { parentKey: string; projectKey: string }): Promise<DecomposeResult> {
-  const parent = (await jira.getIssue(input.parentKey, ['summary', 'description'])) as { fields?: { description?: unknown } };
+  const parent = (await jira.getIssue(input.parentKey, ['summary', 'description'])) as { fields?: { summary?: string; description?: unknown } };
   const parentRef = extractExternalRef(JSON.stringify(parent.fields?.description ?? {})) ?? '';
   const comments = await jira.listComments(input.parentKey);
 
@@ -295,10 +390,16 @@ export async function decompose(jira: JiraClient, input: { parentKey: string; pr
       continue;
     }
     try {
+      let subtaskTypeId: string;
+      try {
+        subtaskTypeId = await jira.getIssueTypeId(input.projectKey, 'Subtask');
+      } catch {
+        subtaskTypeId = await jira.taskTypeId(input.projectKey);
+      }
       const created = await jira.createIssue({
         project: { key: input.projectKey },
         summary: child.title,
-        issuetype: { id: await jira.taskTypeId(input.projectKey) },
+        issuetype: { id: subtaskTypeId },
         description: buildChildDescription({ parentKey: input.parentKey, packageId, parentExternalRef: parentRef, child }),
         parent: { key: input.parentKey },
         labels: ['child', 'decomposed'],

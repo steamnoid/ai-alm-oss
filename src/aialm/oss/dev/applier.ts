@@ -1,7 +1,7 @@
 import type { JiraClient, JiraComment } from '../alm/jira.ts';
 import { type AdfNode, bullets, doc, para } from '../alm/adf.ts';
 import { hasHumanApprovalFor, unassignIfAllDecided, type ApprovalComment } from '../shared/approval.ts';
-import { normalize, proposalIdFor } from '../shared/identity.ts';
+import { normalize, proposalIdFor, isAiMarked} from '../shared/identity.ts';
 import { MARKERS } from '../shared/markers.ts';
 import type { StatusRow } from '../shared/status.ts';
 import type { DevProposalKind } from './analyst.ts';
@@ -117,7 +117,7 @@ export function parseDevProposalComment(comment: { bodyAdf: unknown; bodyText: s
  */
 export function collectDevProposals(comments: JiraComment[]): DevContractResult {
   const human: ApprovalComment[] = comments
-    .filter(c => !c.bodyText.includes('[AI-generated]'))
+    .filter(c => !isAiMarked(c.bodyText))
     .map(c => ({ id: c.id, body: c.bodyText }));
 
   const proposals: DevContractEntry[] = [];
@@ -126,7 +126,7 @@ export function collectDevProposals(comments: JiraComment[]): DevContractResult 
 
   for (const c of comments) {
     if (!c.bodyText.includes(MARKERS.DEV_PROPOSAL_HEADING)) continue;
-    if (c.bodyText.includes('[AI-generated]') === false) continue;
+    if (!isAiMarked(c.bodyText)) continue;
     const parsed = parseDevProposalComment(c);
     if (!parsed) { malformed++; continue; }
     if (!hasHumanApprovalFor(human, parsed.id)) continue;

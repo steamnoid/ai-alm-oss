@@ -21,7 +21,7 @@ import { parseRepoRef, repoKey } from '../src/aialm/oss/board/flags.ts';
  *
  * Usage:
  *   npx tsx scripts/run-pipeline.mts --repo=steamnoid/wellbeing-tracker-public \
- *     [--workers=4] [--genWorkers=1] [--interval=30]
+ *     [--workers=2] [--genWorkers=2] [--interval=30]
  */
 
 interface Args {
@@ -41,8 +41,8 @@ function parseArgs(): Args {
   }
   return {
     repo: out.repo ?? '',
-    workers: Number(out.workers ?? 4),
-    genWorkers: Number(out.genWorkers ?? 1),
+    workers: Number(out.workers ?? 2),
+    genWorkers: Number(out.genWorkers ?? 2),
     interval: Number(out.interval ?? 30),
     once: out.once === '1',
   };

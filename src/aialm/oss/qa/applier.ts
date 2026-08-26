@@ -1,7 +1,7 @@
 import type { JiraClient, JiraComment } from '../alm/jira.ts';
 import { type AdfNode, bullets, codeBlock, doc, para } from '../alm/adf.ts';
 import { hasHumanApprovalFor, unassignIfAllDecided, type ApprovalComment } from '../shared/approval.ts';
-import { normalize, proposalIdFor } from '../shared/identity.ts';
+import { normalize, proposalIdFor, isAiMarked} from '../shared/identity.ts';
 import { MARKERS } from '../shared/markers.ts';
 import type { ReportStatus, StatusRow } from '../shared/status.ts';
 
@@ -93,7 +93,7 @@ export function parseQaProposalComment(comment: { bodyAdf: unknown; bodyText: st
  */
 export function collectQaProposals(comments: JiraComment[]): QaCollectResult {
   const human: ApprovalComment[] = comments
-    .filter(c => !c.bodyText.includes('[AI-generated]'))
+    .filter(c => !isAiMarked(c.bodyText))
     .map(c => ({ id: c.id, body: c.bodyText }));
 
   const proposals: QaSelectedProposal[] = [];
@@ -102,7 +102,7 @@ export function collectQaProposals(comments: JiraComment[]): QaCollectResult {
 
   for (const c of comments) {
     if (!c.bodyText.includes(MARKERS.QA_PROPOSAL_HEADING)) continue; // not QA-looking
-    if (c.bodyText.includes('[AI-generated]') === false) continue; // only AI proposals, approval is separate
+    if (!isAiMarked(c.bodyText)) continue; // only AI proposals, approval is separate
     const parsed = parseQaProposalComment(c);
     if (!parsed) {
       malformed++;

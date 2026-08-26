@@ -1,4 +1,4 @@
-import { proposalIdFor } from '../shared/identity.ts';
+import { proposalIdFor, isAiMarked} from '../shared/identity.ts';
 import { hasHumanApprovalFor, type ApprovalComment } from '../shared/approval.ts';
 import type { PullRequestTrace } from '../shared/models.ts';
 
@@ -38,7 +38,7 @@ export function prGate(verdictReady: boolean, hasApproval: boolean): PrGate {
 
 /** True when a human comment approves opening the PR for this key. */
 export function prApproved(comments: { id: string; bodyText: string; isAiGenerated?: boolean }[], key: string): boolean {
-  const list: ApprovalComment[] = comments.map(c => ({ id: c.id, body: c.bodyText, isAiGenerated: c.isAiGenerated ?? c.bodyText.includes(AI_MARK) }));
+  const list: ApprovalComment[] = comments.map(c => ({ id: c.id, body: c.bodyText, isAiGenerated: c.isAiGenerated ?? isAiMarked(c.bodyText) }));
   return hasHumanApprovalFor(list, key);
 }
 

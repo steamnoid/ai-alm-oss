@@ -9,11 +9,13 @@ import {
 } from '../../src/aialm/oss/alm/board.ts';
 
 describe('board contract — ROLE_COLUMNS', () => {
-  it('orders the 16 columns Candidates Pool → agents/awaiting → impl/verify/pr → Done', () => {
+  it('orders the 18 columns Candidates Pool → agents/awaiting → impl/verify/pr → Done', () => {
     expect(ROLE_COLUMNS).toEqual([
       'Candidates Pool',
       'Agent Working (PO Analyst)',
       'Awaiting Approval (PO)',
+      'Agent Working (PO Prep Decomp)',
+      'Awaiting Approval (PO Decomp)',
       'Agent Working (QA Analyst)',
       'Awaiting Approval (QA)',
       'Agent Working (ARCH Analyst)',
@@ -35,8 +37,8 @@ describe('board contract — ROLE_COLUMNS', () => {
     for (const c of ROLE_COLUMNS) expect(Object.values(BOARD_STATUS)).toContain(c);
   });
 
-  it('PROVISION_STATUSES = 15 role statuses (excludes default Done) with categories', () => {
-    expect(PROVISION_STATUSES).toHaveLength(15);
+  it('PROVISION_STATUSES = 17 role statuses (excludes default Done) with categories', () => {
+    expect(PROVISION_STATUSES).toHaveLength(17);
     expect(PROVISION_STATUSES.some(s => s.name === BOARD_STATUS.done)).toBe(false);
     for (const { name, statusCategory } of PROVISION_STATUSES) {
       expect(statusCategory).toBe(statusCategoryFor(name));
@@ -68,7 +70,7 @@ describe('board column resolution', () => {
 
   it('maps APPLY mutators to their post-apply column', () => {
     expect(boardColumnFor({ kind: 'APPLY', mutator: 'import' })).toBe(BOARD_STATUS.candidates);
-    expect(boardColumnFor({ kind: 'APPLY', mutator: 'decompose' })).toBe(BOARD_STATUS.poAwait);
+    expect(boardColumnFor({ kind: 'APPLY', mutator: 'decompose' })).toBe(BOARD_STATUS.decompAwait);
     expect(boardColumnFor({ kind: 'APPLY', mutator: 'sec-apply' })).toBe(BOARD_STATUS.secAwait);
     expect(boardColumnFor({ kind: 'APPLY', mutator: 'arch-apply' })).toBe(BOARD_STATUS.archAwait);
   });

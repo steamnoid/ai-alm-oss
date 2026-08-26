@@ -1,0 +1,43 @@
+# Local kind cluster overlay.
+# Prereqs:
+#   kind create cluster
+#   npm run docker:build                 # ai-alm-oss:local for this host arch
+#   npm run kind:load                    # push image into the cluster
+#   npm run k8s:secret                   # Secret from .env (never committed)
+#   npm run k8s:apply
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ai-alm-oss
+resources:
+  - ../../base
+images:
+  - name: ai-alm-oss
+    newTag: local
+patches:
+  # kind's default local-path provisioner is RWO single-node — fine here.
+  - target:
+      kind: PersistentVolumeClaim
+      name: ai-alm-oss-data
+    path: patch-storageclass.yaml
+  - target:
+       kind: Deployment
+       name: ai-alm-oss
+     patch: |-
+       - op: replace
+         path: /spec/template/spec/containers/0/imagePullPolicy
+         value: Never
+       - op: replace
+         path: /spec/template/spec/containers/0/env/0/value
+         value: WELLBEINGT
+       - op: replace
+         path: /spec/template/spec/containers/0/env/1/value
+         value: "--workers=2 --genWorkers=2"
+       - op: replace
+         path: /spec/template/spec/containers/0/env/3/value
+         value: k8s
+       # generative pods read the LLM auth from this Secret
+       - op: add
+         path: /spec/template/spec/containers/0/env/-
+         value:
+           name: AIALM_OPENCODE_AUTH_SECRET
+           value: aialm-opencode-auth

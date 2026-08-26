@@ -1,0 +1,36 @@
+name: ai-alm-oss
+
+services:
+  orchestrator:
+    build:
+      context: .
+      target: runtime
+    image: ai-alm-oss:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      AIALM_SKILL_RUNNER: ${AIALM_SKILL_RUNNER:-subprocess}
+      NODE_OPTIONS: ${NODE_OPTIONS:---max-old-space-size=512 --expose-gc}
+    command: >
+      npx tsx scripts/orchestrate.mts
+      --project=${PROJECT:?set PROJECT (e.g. WELLBEINGT) in shell or compose env}
+      --workers=${ORCHESTRATE_WORKERS:-2}
+      --genWorkers=${GEN_WORKERS:-2}
+      --interval=${INTERVAL:-30}
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    volumes:
+      # cursor + generative queue survive container restarts
+      - state:/app/state
+      # wave working copies shared by agent steps (qa-impl/dev-impl/verify/pr)
+      - work:/app/.work
+      # optional: SSH key for fork pushes (uncomment to enable)
+      # - ${HOME}/.ssh:/home/node/.ssh:ro
+
+volumes:
+  state:
+  work:

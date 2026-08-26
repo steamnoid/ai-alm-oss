@@ -82,4 +82,15 @@ describe('aiProposalIds / allProposalsDecided', () => {
     expect(aiProposalIds([glued])).toEqual(['0ab12cd']);
     expect(hasHumanApprovalFor([glued, c('✅')], '0ab12cd')).toBe(true);
   });
+
+  it('recognizes a delegated approval whose rationale is glued after the id', () => {
+    // Regression: the LLM gate-agent posts "APPROVE:<id>" in its own paragraph
+    // and the rationale in the next one; adfToPlainText renders them as
+    // "…APPROVE:0ab12cdVerified…" — a trailing \b after the hex run would miss.
+    const delegated = c('[delegated][llm] APPROVE:0ab12cdVerified the ticket and linked issue', false);
+    expect(approvesProposal(delegated, '0ab12cd')).toBe(true);
+    expect(rejectsProposal(c('[delegated][llm] 🗑️:0ab12cdProposal not ready', false), '0ab12cd')).toBe(true);
+    // a longer hex run must NOT match a 7-digit prefix
+    expect(approvesProposal(c('APPROVE:0ab12cd9extra'), '0ab12cd')).toBe(false);
+  });
 });

@@ -30,3 +30,14 @@ export function proposalHeader(issueKey: string, skill: string, id: string): str
 }
 
 export const AI_MARK = '[AI-generated]';
+
+/**
+ * Tolerant AI-mark detection. Agents occasionally emit the marker without the
+ * brackets ("AI-generated Proposal — …"); trust decisions must classify those
+ * as AI-authored all the same, otherwise such proposals are treated as human
+ * text and the approval channel breaks.
+ */
+export function isAiMarked(text: string | undefined | null): boolean {
+  if (!text) return false;
+  return /\[?AI-generated\]?/i.test(text);
+}

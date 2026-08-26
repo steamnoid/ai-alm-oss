@@ -41,7 +41,9 @@ export function syncForkCommands(input: { upstream: string; forkRemote: string; 
     `git reset --hard upstream/${base}`,
     `git checkout -B ${branch}`,
     `git rebase upstream/${base} 2>/dev/null || true`,
-    `git push ${forkRemote} ${branch}`,
+    // force-with-lease makes re-runs reproducible: fresh clone resets branch to upstream/base,
+    // so second push without force would be rejected (non-fast-forward)
+    `git push --force-with-lease ${forkRemote} ${branch}`,
   ];
 }
 

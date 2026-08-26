@@ -10,6 +10,11 @@ export const BOARD_STATUS = {
   // PO
   poAgent: 'Agent Working (PO Analyst)',
   poAwait: 'Awaiting Approval (PO)',
+  // Decompose (prep + apply) — distinct from PO Analyst
+  // Note: Jira caps status names at 30 chars, so the long form "Decompose" is
+  // shortened to "Decomp" to fit (30: Agent Working (PO Prep Decomp)).
+  decompAgent: 'Agent Working (PO Prep Decomp)',
+  decompAwait: 'Awaiting Approval (PO Decomp)',
   // QA
   qaAgent: 'Agent Working (QA Analyst)',
   qaAwait: 'Awaiting Approval (QA)',
@@ -45,6 +50,8 @@ export const ROLE_COLUMNS: readonly BoardStatusName[] = [
   BOARD_STATUS.candidates,
   BOARD_STATUS.poAgent,
   BOARD_STATUS.poAwait,
+  BOARD_STATUS.decompAgent,
+  BOARD_STATUS.decompAwait,
   BOARD_STATUS.qaAgent,
   BOARD_STATUS.qaAwait,
   BOARD_STATUS.archAgent,
@@ -78,7 +85,7 @@ export function statusCategoryFor(name: string): 'TODO' | 'IN_PROGRESS' | 'DONE'
 
 const AGENT_BY_SKILL: Record<string, BoardStatusName> = {
   'aialm-oss-po-analyze': BOARD_STATUS.poAgent,
-  'aialm-oss-po-prep-decompose': BOARD_STATUS.poAgent,
+  'aialm-oss-po-prep-decompose': BOARD_STATUS.decompAgent,
   'aialm-oss-qa-analyze': BOARD_STATUS.qaAgent,
   'aialm-oss-arch-analyze': BOARD_STATUS.archAgent,
   'aialm-oss-sec-analyze': BOARD_STATUS.secAgent,
@@ -101,6 +108,7 @@ export function boardColumnFor(action: {
   // by the proposal that precedes them; the candidate gate uses the pool.)
   if (action.kind === 'WAIT') {
     if (action.reason?.includes('candidate-selection')) return BOARD_STATUS.candidates;
+    if (action.reason?.includes('decomposition package')) return BOARD_STATUS.decompAwait;
     return BOARD_STATUS.poAwait;
   }
   if (action.kind === 'GENERATE' && action.skill) {
@@ -117,7 +125,7 @@ export function boardColumnFor(action: {
 export function postApplyColumn(mutator: string): BoardStatusName {
   switch (mutator) {
     case 'import': return BOARD_STATUS.candidates;
-    case 'decompose': return BOARD_STATUS.poAwait;
+    case 'decompose': return BOARD_STATUS.decompAwait;
     case 'qa-apply': return BOARD_STATUS.qaImpl;
     case 'dev-apply': return BOARD_STATUS.devImpl;
     case 'sec-apply': return BOARD_STATUS.secAwait;

@@ -1,12 +1,10 @@
-import { AI_MARK } from './identity.ts';
+import { AI_MARK, isAiMarked } from './identity.ts';
 
 /** Approval-shaped content: explicit approve/reject with an id, or a green checkmark. */
 export const APPROVAL_SHAPE_RE =
   /\b(?:APPROVE|approve|LGTM|lgtm)\s*[:#]?\s*[0-9a-f]{7}\b|🗑️\s*[:#]?\s*[0-9a-f]{7}\b|[\u2705\u2714\u2713]/u;
 
-export function isAiMarked(text: string): boolean {
-  return text.includes(AI_MARK);
-}
+export { isAiMarked };
 
 export function hasApprovalShape(text: string): boolean {
   return APPROVAL_SHAPE_RE.test(text);

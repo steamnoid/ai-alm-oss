@@ -1,6 +1,6 @@
 import type { JiraClient } from '../alm/jira.ts';
 import { type AdfNode, bullets, codeBlock, doc, para } from '../alm/adf.ts';
-import { proposalHeader, proposalIdFor, normalize } from '../shared/identity.ts';
+import { proposalHeader, proposalIdFor, normalize, isAiMarked} from '../shared/identity.ts';
 import { assignRoleApprover, type GovernanceRole } from '../governance/roles.ts';
 import { hasHumanApprovalFor, unassignIfAllDecided, type ApprovalComment } from '../shared/approval.ts';
 
@@ -92,13 +92,13 @@ export interface ApplyReviewResult {
 
 function collectApprovedReview(comments: { bodyText: string }[], kind: ReviewKind): { id: string; title: string; body: string }[] {
   const cfg = REVIEW[kind];
-  const human: ApprovalComment[] = comments.filter(c => !c.bodyText.includes('[AI-generated]')).map(c => ({ id: 'x', body: c.bodyText }));
+  const human: ApprovalComment[] = comments.filter(c => !isAiMarked(c.bodyText)).map(c => ({ id: 'x', body: c.bodyText }));
   const out: { id: string; title: string; body: string }[] = [];
   const seen = new Set<string>();
   const labelRe = new RegExp(`${cfg.label.replace(/ /g, '\\s+')}\\s*—\\s*(.+?)(?:AI proposes|$)`, '');
   for (const c of comments) {
     if (!c.bodyText.includes(cfg.skill)) continue;
-    if (!c.bodyText.includes('[AI-generated]')) continue;
+    if (!isAiMarked(c.bodyText)) continue;
     const id = /proposal:\s*([0-9a-f]{7})/.exec(c.bodyText)?.[1];
     if (!id) continue;
     if (!hasHumanApprovalFor(human, id)) continue;

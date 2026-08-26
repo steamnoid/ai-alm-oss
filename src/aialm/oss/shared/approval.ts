@@ -5,7 +5,7 @@
  * Rejection: 🗑️:<id>.
  */
 
-import { AI_MARK } from './identity.ts';
+import { AI_MARK, isAiMarked} from './identity.ts';
 import type { JiraClient } from '../alm/jira.ts';
 
 export interface ApprovalComment {
@@ -15,8 +15,12 @@ export interface ApprovalComment {
   isAiGenerated?: boolean; // true when the comment carries the AI mark
 }
 
-const APPROVE_RE = /\b(?:APPROVE|approve|LGTM|lgtm)\s*[:#]?\s*([0-9a-f]{7})\b/;
-const REJECT_RE = /🗑️\s*[:#]?\s*([0-9a-f]{7})\b/;
+// No trailing \b: adfToPlainText glues paragraphs, so a proposal id is often
+// followed by the next paragraph's first word ("…837769fVerified…") and the
+// word boundary after the hex run would never match. Use a negative lookahead
+// so the 7-hex capture cannot be part of a longer hex run.
+const APPROVE_RE = /\b(?:APPROVE|approve|LGTM|lgtm)\s*[:#]?\s*([0-9a-f]{7})(?![0-9a-f])/;
+const REJECT_RE = /🗑️\s*[:#]?\s*([0-9a-f]{7})(?![0-9a-f])/;
 // Green-check approvals: ✅ (white bird in green square), ✔, ✓. A human check
 // approves without needing an explicit proposal id.
 const APPROVE_EMOJI = /[\u2705\u2714\u2713]/;
@@ -36,7 +40,7 @@ export function hasApproveEmoji(body: string): boolean {
 
 /** True when the comment approves exactly this proposal id. */
 export function approvesProposal(comment: ApprovalComment, proposalId: string): boolean {
-  if (comment.isAiGenerated || comment.body.includes(AI_MARK)) return false;
+  if (comment.isAiGenerated || isAiMarked(comment.body)) return false;
   if (extractId(REJECT_RE, comment.body) === proposalId) return false;
   if (extractId(APPROVE_RE, comment.body) === proposalId) return true;
   return APPROVE_EMOJI.test(comment.body);
@@ -44,7 +48,7 @@ export function approvesProposal(comment: ApprovalComment, proposalId: string): 
 
 /** True when the comment explicitly rejects/ignores this proposal id. */
 export function rejectsProposal(comment: ApprovalComment, proposalId: string): boolean {
-  if (comment.isAiGenerated || comment.body.includes(AI_MARK)) return false;
+  if (comment.isAiGenerated || isAiMarked(comment.body)) return false;
   return extractId(REJECT_RE, comment.body) === proposalId;
 }
 
@@ -60,7 +64,7 @@ export function hasHumanApprovalFor(comments: ApprovalComment[], proposalId: str
 export function aiProposalIds(comments: ApprovalComment[]): string[] {
   const ids = new Set<string>();
   for (const c of comments) {
-    if (!(c.isAiGenerated || c.body.includes(AI_MARK))) continue;
+    if (!(c.isAiGenerated || isAiMarked(c.body))) continue;
     for (const m of c.body.matchAll(PROPOSAL_MARKER_RE)) ids.add(m[1] as string);
   }
   return [...ids];
@@ -85,7 +89,7 @@ export async function unassignIfAllDecided(
   const comments: ApprovalComment[] = commentBodies.map(c => ({
     id: c.id,
     body: c.bodyText,
-    isAiGenerated: c.bodyText.includes(AI_MARK),
+    isAiGenerated: isAiMarked(c.bodyText),
   }));
   if (!allProposalsDecided(comments)) return false;
   await jira.unassign(issueKey);

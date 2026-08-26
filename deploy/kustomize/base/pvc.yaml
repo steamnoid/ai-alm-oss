@@ -1,0 +1,18 @@
+# Single data volume: state/ (cursor + generative queue) and .work/ (wave
+# working copies shared with generative Jobs via subPaths).
+# storageClass is environment-specific — set it in overlays:
+#   kind  → standard (local-path, RWO, single node)
+#   cloud → an RWX class (EFS / Filestore CSI / Azure Files)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-alm-oss-data
+  namespace: ai-alm-oss
+  labels:
+    app.kubernetes.io/name: ai-alm-oss
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

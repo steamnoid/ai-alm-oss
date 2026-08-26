@@ -36,6 +36,7 @@ npx tsx scripts/orchestrate.mts --project=WELLBEINGT [--dry|--once]
 - No self-approval: only comments marked `[AI-generated]` are ignored by the approval reader; the poller never posts an approval-shaped comment.
 - `--dry` never mutates or persists state.
 - Lock-file + backoff; `--once` for a single pass.
+- Operator auto-gates are a separate daemon (`scripts/gate-auto.mts`) behind the `AIALM_GATE_MODE=human|delegate|llm` feature flag (default `human` = off). In `delegate|llm` modes delegated decisions are posted on the `[delegated]` / `[delegated][llm]` channel (never `[AI-generated]`) — this intentionally bends the no-self-approval principle and must stay opt-in.
 
 ## Tooling / MCP
 

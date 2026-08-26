@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { JiraClient } from '../alm/jira.ts';
 import { doc, para } from '../alm/adf.ts';
-import { AI_MARK } from '../shared/identity.ts';
+import { AI_MARK, isAiMarked} from '../shared/identity.ts';
 import { extractAc } from '../po/work-itemize.ts';
 import { hasHumanApprovalFor, type ApprovalComment } from '../shared/approval.ts';
 import { assignRoleApprover } from '../governance/roles.ts';
@@ -55,14 +55,23 @@ function loadState(projectKey: string): OrchestratorState {
   }
 }
 
+function atomicWriteState(targetPath: string, data: string): void {
+  mkdirSync(dirname(targetPath), { recursive: true });
+  const tmp = `${targetPath}.tmp.${process.pid}.${Date.now()}`;
+  writeFileSync(tmp, data);
+  renameSync(tmp, targetPath);
+}
+
 function saveState(projectKey: string, s: OrchestratorState): void {
-  mkdirSync(dirname(statePath(projectKey)), { recursive: true });
-  writeFileSync(statePath(projectKey), JSON.stringify(s, null, 2));
+  // Trim consumed ledger to prevent unbounded growth (host drift + memory)
+  const CONSUMED_MAX = 500;
+  if (s.consumed.length > CONSUMED_MAX) s.consumed = s.consumed.slice(-CONSUMED_MAX);
+  atomicWriteState(statePath(projectKey), JSON.stringify(s, null, 2));
 }
 
 function human(comments: { bodyText: string }[]): ApprovalComment[] {
   return comments
-    .filter(c => !c.bodyText.includes('[AI-generated]'))
+    .filter(c => !isAiMarked(c.bodyText))
     .map(c => ({ id: 'x', body: c.bodyText, isAiGenerated: false }));
 }
 
@@ -201,12 +210,56 @@ export async function resolveNext(
     return { kind: 'WAIT', reason: 'children present, awaiting PR' };
   }
 
-  const comments = await jira.listComments(key);
-  if (approvedIds(comments, PREP).length > 0) {
-    return { kind: 'APPLY', mutator: 'decompose', targetKey: key, projectKey: input.projectKey, ref: refOf(description) };
+  // Only work-items (not children) go through decomposition; children are
+  // functional units that proceed directly to QA/DEV.
+  if (labels.has('work-item')) {
+    const comments = await jira.listComments(key);
+    // Atomic work item: prep-decompose found it cannot be split safely and posted
+    // "Work Itemization Blocked" instead of a package. Still requires approval
+    // via the usual PREP gate — no exception — but proceeds with the same ticket
+    // as the implementation unit (no synthetic child). The blocked comment carries
+    // a PREP marker with an 8-char packageId (e.g. 482a6867) that is not a
+    // proposal: marker, so we check approval for that id directly.
+    if (comments.some(c => c.bodyText.includes('Work Itemization Blocked'))) {
+      const blockedIds = comments
+        .filter(c => c.bodyText.includes('Work Itemization Blocked'))
+        .flatMap(c => [...c.bodyText.matchAll(/aialm-oss-po-prep-decompose:\s*([0-9a-f]{7,8})/g)].map(m => m[1] as string));
+      const hs = human(comments);
+      const isBlockedApproved = blockedIds.some(id => hs.some(h => h.body.includes(`APPROVE:${id.slice(0, 7)}`) || h.body.includes(`APPROVE:${id}`)));
+      const hasPrepApproval = approvedIds(comments, PREP).length > 0;
+      if (!isBlockedApproved && !hasPrepApproval) {
+        return { kind: 'WAIT', reason: 'decomposition package awaiting approval' };
+      }
+      // Approved to proceed as single — route the parent itself through the
+      // full QA/DEV → impl → verify → PR pipeline.
+      if (!hasMarker(comments, QA)) return { kind: 'GENERATE', skill: 'aialm-oss-qa-analyze', targetKey: key, repoRef: refOf(description) };
+      if (approvedIds(comments, QA).length > 0) return { kind: 'APPLY', mutator: 'qa-apply', targetKey: key, projectKey: input.projectKey, ref: refOf(description) };
+      if (hasMarker(comments, QA)) return { kind: 'WAIT', reason: 'QA proposals present, await approval' };
+      if (!hasMarker(comments, DEV)) return { kind: 'GENERATE', skill: 'aialm-oss-dev-analyst', targetKey: key, repoRef: refOf(description) };
+      if (approvedIds(comments, DEV).length > 0) return { kind: 'APPLY', mutator: 'dev-apply', targetKey: key, projectKey: input.projectKey, ref: refOf(description) };
+      if (hasMarker(comments, DEV)) return { kind: 'WAIT', reason: 'DEV proposals present, await approval' };
+      if (!hasMarker(comments, SEC)) return { kind: 'GENERATE', skill: 'aialm-oss-sec-analyze', targetKey: key, repoRef: refOf(description) };
+      if (approvedIds(comments, SEC).length > 0) return { kind: 'APPLY', mutator: 'sec-apply', targetKey: key, projectKey: input.projectKey, ref: refOf(description) };
+      if (hasMarker(comments, SEC)) return { kind: 'WAIT', reason: 'SEC proposals present, await approval' };
+      if (!hasMarker(comments, ARCH)) return { kind: 'GENERATE', skill: 'aialm-oss-arch-analyze', targetKey: key, repoRef: refOf(description) };
+      if (approvedIds(comments, ARCH).length > 0) return { kind: 'APPLY', mutator: 'arch-apply', targetKey: key, projectKey: input.projectKey, ref: refOf(description) };
+      if (hasMarker(comments, ARCH)) return { kind: 'WAIT', reason: 'ARCH proposals present, await approval' };
+      if (!hasMarker(comments, QAI)) return { kind: 'GENERATE', skill: 'aialm-oss-qa-impl', targetKey: key, repoRef: refOf(description) };
+      if (!hasMarker(comments, DEVI)) return { kind: 'GENERATE', skill: 'aialm-oss-dev-impl', targetKey: key, repoRef: refOf(description) };
+      if (!hasMarker(comments, READY)) return { kind: 'GENERATE', skill: 'aialm-oss-verify', targetKey: key, repoRef: refOf(description) };
+      if (!hasMarker(comments, PR)) return { kind: 'GENERATE', skill: 'aialm-oss-pr', targetKey: key, repoRef: refOf(description) };
+      return { kind: 'WAIT', reason: 'children present, awaiting PR' };
+    }
+    if (approvedIds(comments, PREP).length > 0) {
+      return { kind: 'APPLY', mutator: 'decompose', targetKey: key, projectKey: input.projectKey, ref: refOf(description) };
+    }
+    if (hasMarker(comments, PREP)) return { kind: 'WAIT', reason: 'decomposition package awaiting approval' };
+    return { kind: 'GENERATE', skill: 'aialm-oss-po-prep-decompose', targetKey: key, repoRef: refOf(description) };
   }
-  if (hasMarker(comments, PREP)) return { kind: 'WAIT', reason: 'decomposition package awaiting approval' };
-  return { kind: 'GENERATE', skill: 'aialm-oss-po-prep-decompose', targetKey: key, repoRef: refOf(description) };
+  // Child with no further decomposition needed — advance via its own QA/DEV path
+  // when evaluated standalone (e.g., atomic single child). Fall through to
+  // generic handling which will route to QA.
+  return { kind: 'NONE' };
 }
 
 function parseExternalRef(ref: string): { provider: 'github'; repo: string; issueNumber: number; url: string; syncedAt: string } {
@@ -259,7 +312,8 @@ function workerPool<T>(items: T[], workers: number, fn: (item: T) => Promise<voi
   const queue = [...items];
   const runners = Array.from({ length: Math.min(workers, queue.length) || 1 }, async () => {
     while (queue.length) {
-      const item = queue.shift()!;
+      const item = queue.shift();
+      if (!item) break;
       await fn(item);
     }
   });
@@ -281,7 +335,7 @@ export async function advance(
   jira: JiraClient,
   input: { projectKey: string; dry?: boolean; cursorOverride?: string; workers?: number },
 ): Promise<AdvanceResult> {
-  const { projectKey, dry = false, workers = 4 } = input;
+  const { projectKey, dry = false, workers = 2 } = input;
   const state = loadState(projectKey);
   const cursor = input.cursorOverride ?? state.cursor ?? '';
   const jql = `project = ${projectKey} AND updated >= "${jqlTimestamp(cursor)}" ORDER BY updated ASC`;

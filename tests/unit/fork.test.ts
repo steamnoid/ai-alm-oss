@@ -44,7 +44,7 @@ describe('syncForkCommands', () => {
     expect(cmds).toContain('git reset --hard upstream/main');
     expect(cmds).toContain('git checkout -B aialm-oss/x');
     expect(cmds.some(c => c.startsWith('git rebase upstream/main'))).toBe(true);
-    expect(cmds).toContain('git push origin aialm-oss/x');
+    expect(cmds).toContain('git push --force-with-lease origin aialm-oss/x');
   });
 });
 
