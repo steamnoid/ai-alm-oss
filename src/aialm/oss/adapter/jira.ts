@@ -7,7 +7,9 @@
 import type { TicketState } from '../shared/state.js';
 import { IMMUTABLE_STATUS_LABEL_PREFIX, stateLabels } from '../shared/state.js';
 import { proposalHeader } from '../shared/identity.js';
-import { markdownToAdf } from './adf.js';
+import type { CommentLike, Reaction } from '../shared/approval.js';
+import { isAiMarked } from '../shared/identity.js';
+import { markdownToAdf, adfToPlainText } from './adf.js';
 import type { JiraConfig } from './config.js';
 
 export class JiraError extends Error {
@@ -103,7 +105,7 @@ export class JiraClient {
   ): Promise<void> {
     const fields: Record<string, unknown> = {};
     if (cids.stage) fields[cids.stage] = { value: state.stage };
-    if (cids.role && state.role) fields[cids.role] = { value: state.role };
+    if (cids.role) fields[cids.role] = state.role ? { value: state.role } : null;
     if (cids.agent) fields[cids.agent] = { value: state.agent };
     if (Object.keys(fields).length > 0) {
       // Right after create, Jira may temporarily 404 on the fresh key
@@ -121,6 +123,19 @@ export class JiraClient {
       }
     }
     await this.syncStateLabels(key, state);
+  }
+
+  /** Current full label set of an issue. */
+  async getLabels(key: string): Promise<string[]> {
+    const issue = (await this.getIssue(key, ['labels'])) as { fields?: { labels?: string[] } };
+    return issue?.fields?.labels ?? [];
+  }
+
+  /** Replace the full label set (rewrite to drop/remove specific labels). */
+  async setLabels(key: string, labels: string[]): Promise<void> {
+    await this.req('PUT', `/rest/api/3/issue/${encodeURIComponent(key)}`, {
+      fields: { labels },
+    });
   }
 
   /**
@@ -169,6 +184,72 @@ export class JiraClient {
     return { commentId: id, header };
   }
 
+  /**
+   * List issue comments shaped for approval detection. `isAi` per comment =
+   * author matches the authenticated AI ALM OSS account OR the comment carries
+   * the `[AI-generated]` marker (tolerant). Reactions map to `{emoji, isAi}`.
+   */
+  async listComments(key: string): Promise<CommentLike[]> {
+    const d = (await this.req(
+      'GET',
+      `/rest/api/3/issue/${encodeURIComponent(key)}/comment`,
+    )) as {
+      comments?: Array<{
+        id: string;
+        author?: { accountId?: string } | null;
+        body?: unknown;
+        reactions?: Array<{ emoji?: string; author?: { accountId?: string } | null }>;
+      }>;
+    };
+    const me = await this.myself();
+    const aiAccountId = me.accountId;
+    return (d.comments ?? []).map(c => {
+      const bodyText = adfToPlainText(c.body);
+      const reactions: Reaction[] = [];
+      for (const r of c.reactions ?? []) {
+        const emoji = r.emoji ?? '';
+        if (!emoji) continue;
+        reactions.push({ emoji, isAi: c.author?.accountId === aiAccountId });
+      }
+      return {
+        body: bodyText,
+        isAi: c.author?.accountId === aiAccountId || isAiMarked(bodyText),
+        reactions,
+      };
+    });
+  }
+
+  /** Distinct status names in a project's workflows (native kanban columns). */
+  async listStatuses(projectKey: string): Promise<string[]> {
+    const d = (await this.req(
+      'GET',
+      `/rest/api/3/project/${encodeURIComponent(projectKey)}/statuses`,
+    )) as Array<{ statuses?: Array<{ name?: string }> }>;
+    const names = new Set<string>();
+    for (const ty of d) for (const st of ty.statuses ?? []) if (st.name) names.add(st.name);
+    return [...names];
+  }
+
+  /**
+   * Transition an issue to a native status by NAME. Returns `{ found }` —
+   * `found:false` when no transition to that status name exists (caller
+   * surfaces the "missing column" zwrotka).
+   */
+  async transitionIssue(key: string, statusName: string): Promise<{ found: boolean }> {
+    const tr = (await this.req(
+      'GET',
+      `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`,
+    )) as { transitions?: Array<{ id: string; to?: { name?: string } }> };
+    const match = (tr.transitions ?? []).find(
+      t => t.to?.name && t.to.name.toLowerCase() === statusName.toLowerCase(),
+    );
+    if (!match) return { found: false };
+    await this.req('POST', `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
+      transition: { id: match.id },
+    });
+    return { found: true };
+  }
+
   /** JQL search returning issue objects with `key` (and optional extra fields). */
   async searchJql(
     jql: string,
@@ -190,6 +271,27 @@ export class JiraClient {
       name: string;
     };
     return { key: p.key, name: p.name };
+  }
+
+  /** List all projects (key + name), for name-based resolution. */
+  async listProjects(): Promise<Array<{ key: string; name: string }>> {
+    const d = (await this.req(
+      'GET',
+      '/rest/api/3/project/search?maxResults=200',
+    )) as { values?: Array<{ key: string; name: string }> };
+    const out = d.values ?? [];
+    let startAt = out.length;
+    for (;;) {
+      const page = (await this.req(
+        'GET',
+        `/rest/api/3/project/search?startAt=${startAt}&maxResults=200`,
+      )) as { values?: Array<{ key: string; name: string }>; isLast?: boolean };
+      const batch = page.values ?? [];
+      out.push(...batch);
+      if (page.isLast || batch.length === 0) break;
+      startAt += batch.length;
+    }
+    return out;
   }
 
   /** Whether a project with this key exists. */

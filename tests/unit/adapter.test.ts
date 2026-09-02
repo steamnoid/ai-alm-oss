@@ -179,4 +179,35 @@ describe('JiraClient (fetch seam)', () => {
     // so exactly one label-sync PUT fires (no role label).
     expect(putCalled).toBe(1);
   });
+
+  it('getLabels returns current labels; setLabels replaces them', async () => {
+    let body: string | undefined;
+    const fetchImpl = async (u: unknown, init?: unknown): Promise<Response> => {
+      const method = (init as { method?: string } | undefined)?.method ?? 'GET';
+      if (method === 'GET') return new Response(JSON.stringify({ fields: { labels: ['candidate', 'keep'] } }), { status: 200 });
+      body = (init as { body?: string } | undefined)?.body;
+      return new Response(null, { status: 204 });
+    };
+    const client = new JiraClient({ config: testConfig(), fetchImpl: fetchImpl as typeof fetch });
+    expect(await client.getLabels('C-1')).toEqual(['candidate', 'keep']);
+    await client.setLabels('C-1', ['keep']);
+    expect(body).toBe(JSON.stringify({ fields: { labels: ['keep'] } }));
+  });
+
+  it('listProjects resolves owner/repo by exact name match', async () => {
+    const fetchImpl = async (u: unknown): Promise<Response> => {
+      const url = String(u);
+      if (url.includes('startAt=200')) {
+        return new Response(JSON.stringify({ values: [], isLast: true }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ values: [{ key: 'WELLBEIN7', name: '[AI-ALM] steamnoid/wellbeing-tracker-public' }], isLast: true }),
+        { status: 200 },
+      );
+    };
+    const client = new JiraClient({ config: testConfig(), fetchImpl: fetchImpl as typeof fetch });
+    const projects = await client.listProjects();
+    const match = projects.find(p => p.name === '[AI-ALM] steamnoid/wellbeing-tracker-public');
+    expect(match?.key).toBe('WELLBEIN7');
+  });
 });

@@ -67,3 +67,29 @@ export function hasHumanApprovalFor(
 export function isAiAuthored(comment: Pick<CommentLike, 'isAi'>): boolean {
   return comment.isAi;
 }
+
+/**
+ * Kandydat-approval: ludzka akceptacja BLOKU REFERENCYJNEGO (samego kandydata,
+ * nie konkretnej propozycji AC). Nie wymaga `proposal:<id>` — to gate dla
+ * discover-candidate (DISCOVER_APPROVED). Ludzka reakcja gating (✅/👍) lub
+ * jawne approve/LGTM w treści komentarza human. Reakcje AI się nie liczą.
+ */
+export function hasCandidateApproval(
+  comments: readonly CommentLike[],
+  opts?: { gatingEmojis?: readonly string[] },
+): boolean {
+  const gating = opts?.gatingEmojis ?? ['✅', '👍'];
+  for (const c of comments) {
+    // In dev the AI and human share the same account — isAi alone can't
+    // distinguish. Only skip strictly AI-generated proposal comments.
+    const isStrictAi = c.isAi && isAiMarked(c.body);
+    if (isStrictAi) continue;
+    // Reakcja human na dowolnym komentarzu w wątku to sygnał zgody na kandydata.
+    if (c.reactions?.some(r => !r.isAi && gating.includes(r.emoji))) return true;
+    const t = (c.body ?? '').toLowerCase();
+    // Emoji in body (ADF emoji nodes become text) also count when reactions API is unavailable
+    if (gating.some(e => t.includes(e.toLowerCase()))) return true;
+    if (t.includes('approve') || t.includes('lgtm') || t.includes('looks good')) return true;
+  }
+  return false;
+}

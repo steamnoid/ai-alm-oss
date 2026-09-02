@@ -40,8 +40,21 @@ export function fieldDefinitions(): FieldDef[] {
   }));
 }
 
+function numericId(field: CustomFieldInfo): number {
+  const m = field.id.match(/(\d+)$/);
+  return m ? Number(m[1]) : -1;
+}
+
 function findByName(fields: CustomFieldInfo[], name: string): CustomFieldInfo | undefined {
-  return fields.find(f => f.name.toLowerCase() === name.toLowerCase());
+  const needle = name.toLowerCase();
+  const matches = fields.filter(f => f.name.toLowerCase() === needle);
+  if (matches.length === 0) return undefined;
+  if (matches.length > 1) {
+    // Duplicates exist (e.g. cf10087 old empty + cf10090 new populated).
+    // Pick newest by numeric id; ordering from /field is not reliable.
+    matches.sort((a, b) => numericId(b) - numericId(a));
+  }
+  return matches[0];
 }
 
 /**
