@@ -10,3 +10,6 @@ state/
 .orchestrate.lock
 .work/
 .jira-session.json
+.process/
+.playwright-mcp/
+.playwright-profile/

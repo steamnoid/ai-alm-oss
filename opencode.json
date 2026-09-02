@@ -11,7 +11,7 @@
       "command": ["uvx", "mcp-atlassian"],
       "environment": {
         "JIRA_URL": "https://paligakrzychu.atlassian.net",
-        "JIRA_USERNAME": "paligakrzychu@gmail.com",
+        "JIRA_USERNAME": "{env:JIRA_BOT_EMAIL}",
         "JIRA_API_TOKEN": "{env:JIRA_BOT_TOKEN}"
       },
       "enabled": true
