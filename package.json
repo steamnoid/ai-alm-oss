@@ -12,8 +12,9 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit",
-    "onboard": "tsx scripts/onboard.mts",
-    "discover": "tsx scripts/discover.mts"
+"onboard": "tsx scripts/onboard.mts",
+  "discover": "tsx scripts/discover.mts",
+  "notes": "tsx scripts/notes-onboard-discover.mts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
