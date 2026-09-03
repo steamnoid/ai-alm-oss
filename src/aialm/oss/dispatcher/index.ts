@@ -230,20 +230,15 @@ export function correctedOpencodeConfig(jiraSite: string, opts: { jiraEmailEnv?:
           JIRA_URL: jiraSite,
           JIRA_USERNAME: `{env:${emailEnv}}`,
           JIRA_API_TOKEN: `{env:${tokenEnv}}`,
-          // Minimal toolsets to avoid the failing Service Desk / third-party token endpoint.
-          // The full MCP default includes jira_service_desk which calls a Jira endpoint
-          // that does not support PAT for this Cloud user type (private relay email).
-          // Keep only the toolsets needed for po-analyze / generic skills.
-          TOOLSETS: 'jira_issues,jira_comments,jira_fields',
+          // Exclude jira_service_desk (causes PAT/third-party token error for private-relay Cloud user),
+          // but include jira_transitions so skills can move AWAITS AGENT PICKUP → AGENT WORKING → AWAITS HUMAN APPROVAL.
+          TOOLSETS: 'jira_issues,jira_comments,jira_fields,jira_transitions',
         },
         enabled: true,
       },
     },
   };
-  // Also try minimal toolsets first; if that fails, the full list is above.
-  // For now, keep the corrected config minimal to avoid the third-party token endpoint.
-  // The MCP will only load jira_issues and jira_comments by default if TOOLSETS is not set,
-  // but we explicitly set it to avoid the failing service desk check.
+  // jira_service_desk excluded to avoid third-party token check; jira_transitions kept for skill-owned state transitions.
   return JSON.stringify(cfg, null, 2);
 }
 
