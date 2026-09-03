@@ -15,7 +15,9 @@
     "onboard": "tsx scripts/onboard.mts",
     "discover": "tsx scripts/discover.mts",
     "notes": "tsx scripts/notes-onboard-discover.mts",
-    "orchestrate:ticket": "tsx scripts/orchestrate-ticket.mts"
+    "orchestrate:ticket": "tsx scripts/orchestrate-ticket.mts",
+    "dispatcher": "tsx scripts/dispatcher.mts",
+    "docker:build": "docker build -t ai-alm-oss:local ."
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
