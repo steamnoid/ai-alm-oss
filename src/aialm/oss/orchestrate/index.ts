@@ -114,13 +114,43 @@ function hasAnyProposalForSkill(comments: readonly CommentLike[], skill: AGENT):
  * Fallback discover gdy brak skill-proposals ale candidateApproved.
  */
 export function nextAgentAfterApproval(state: TicketState, comments: readonly CommentLike[]): AGENT | null {
-  // Pickup table — wybierz NAJDALEJ zaawansowany zatwierdzony etap (ostatni match),
-  // nie najwcześniejszy. Dzięki temu po-analyze+po-prep-decompose oba approved → po-decompose.
-  let lastMatch: AGENT | null = null;
+  // Pickup table — wybierz NAJDALEJ zaawansowany ZALICZONY etap.
+  // Etap zaliczony gdy:
+  //   (a) ma approved proposal:<id>, ALBO
+  //   (b) brak propozycji (hasAnyProposal==false) ale ma komentarz wykonania
+  //       (body zawiera nazwę skilla, np. "aialm-oss-sec-analyze" — summary/header)
+  //       + human approval PO tym komentarzu (hasCandidateApproval w suffixie).
+  // (b) dotyczy wszystkich skilli generycznie, nie tylko SEC — każdy skill może
+  // zakończyć się "CREATED: none / SKIPPED" (no-findings) i wtedy routing musi
+  // przejść dalej po potwierdzeniu człowieka, a nie tkwić w pętli.
+  // Wymóg "po komentarzu" zapobiega przeskokowi SEC przed jego approve —
+  // global hasCandidateApproval po arch nie może od razu zaliczyć SEC.
+  let lastPassed: AGENT | null = null;
   for (const row of PICKUP_AFTER_APPROVAL) {
-    if (hasApprovedProposalForSkill(comments, row.fromSkill)) lastMatch = row.toAgent;
+    const approved = hasApprovedProposalForSkill(comments, row.fromSkill);
+    if (approved) {
+      lastPassed = row.toAgent;
+      continue;
+    }
+    const hasAny = hasAnyProposalForSkill(comments, row.fromSkill);
+    if (!hasAny) {
+      // znajdź ostatni komentarz wykonania tego skilla
+      let execIdx = -1;
+      for (let i = comments.length - 1; i >= 0; i--) {
+        if ((comments[i]?.body ?? '').includes(row.fromSkill)) {
+          execIdx = i;
+          break;
+        }
+      }
+      if (execIdx >= 0) {
+        const suffix = comments.slice(execIdx + 1);
+        if (suffix.length > 0 && hasCandidateApproval(suffix)) {
+          lastPassed = row.toAgent;
+        }
+      }
+    }
   }
-  if (lastMatch) return lastMatch;
+  if (lastPassed) return lastPassed;
   // Fallback dla po-analyze gdy human dał tylko generyczne ✅ bez APPROVE:<id>
   // (shared-account dev: isAi-mark rozróżnia). Tylko dla pierwszego etapu.
   if (hasCandidateApproval(comments)) {
@@ -241,9 +271,32 @@ export async function advanceOne(
 
     const comments = await jira.listComments(key);
     // Rozstrzygnij następnego agenta wg konwencji pickup (AGENTS.md tablica).
+    // Exclusive subticket mode (po-decompose → qa-analyze): QA proposals + approvals
+    // leżą na childach, nie na parencie. Dlatego agregujemy komentarze z dzieci
+    // (parent = KEY) i dopiero na zagregowanym zbiorze oceniamy routing.
     // Jedno źródło: nextAgentAfterApproval bada linearnie pickup table (approved proposals)
     // i fallback discover. Odporne na READY vs AWAITING_HUMAN_APPROVAL podmiany.
-    const nextAgent = nextAgentAfterApproval(state, comments);
+    let routingComments: readonly CommentLike[] = comments;
+    try {
+      const children = await jira.searchJql(`parent = ${key}`, ['key'], 50);
+      if (children.length > 0) {
+        const fetched: CommentLike[] = [...comments];
+        for (const ch of children) {
+          const ck = String((ch as Record<string, unknown>).key ?? '');
+          if (!ck) continue;
+          try {
+            const cc = await jira.listComments(ck);
+            fetched.push(...cc);
+          } catch {
+            // child comments best-effort
+          }
+        }
+        routingComments = fetched;
+      }
+    } catch {
+      // children fetch best-effort; fallback to parent-only
+    }
+    const nextAgent = nextAgentAfterApproval(state, routingComments);
     if (!nextAgent) {
       return {
         key,

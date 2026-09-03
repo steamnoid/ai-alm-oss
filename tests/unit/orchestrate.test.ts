@@ -215,17 +215,40 @@ describe('orchestrate — nextAgentAfterApproval (pickup routing)', () => {
     );
   });
 
-  it('no marker for po-decompose → stays at po-decompose (needs explicit decompose approve)', () => {
+  it('no marker for po-decompose + generic ✅ after summary → qa-analyze (generic no-proposal pass, komentarz wykonania)', () => {
     const comments = [
       commentLike('[AI-generated] Proposal — C-1 — aialm-oss-po-prep-decompose:872f6f02bbca', true),
       commentLike('APPROVE:872f6f02bbca', false),
-      // summary without po-decompose id
+      // summary without po-decompose id — komentarz wykonania
       commentLike('[AI-generated] Summary — C-1 — aialm-oss-po-decompose', true),
-      commentLike('✅', false), // generic approve but no po-decompose id
+      commentLike('✅', false), // generic approve po komentarzu wykonania → zaliczony (dla wszystkich skilli)
     ];
-    // last approved is po-prep-decompose → po-decompose, not qa-analyze
     expect(nextAgentAfterApproval({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'AI', agent: 'none' }, comments)).toBe(
-      'aialm-oss-po-decompose',
+      'aialm-oss-qa-analyze',
+    );
+  });
+
+  it('sec no-proposal + summary + ✅ after → dev-analyst (generic no-proposal for all)', () => {
+    const comments = [
+      commentLike('[AI-generated] Proposal — W-5 — aialm-oss-arch-analyze:894dbd189318', true),
+      commentLike('APPROVE:894dbd189318', false),
+      // sec execution without proposal
+      commentLike('[AI-generated] Summary — W-5 — aialm-oss-sec-analyze\nCREATED: none.\nSKIPPED: no security finding', true),
+      commentLike('✅ Approved sec review — no findings', false),
+    ];
+    expect(nextAgentAfterApproval({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'AI', agent: 'none' }, comments)).toBe(
+      'aialm-oss-dev-analyst',
+    );
+  });
+
+  it('sec no-proposal but no human approve after execution → stays at sec-analyze (needs approve)', () => {
+    const comments = [
+      commentLike('[AI-generated] Proposal — W-5 — aialm-oss-arch-analyze:894dbd189318', true),
+      commentLike('APPROVE:894dbd189318', false),
+      commentLike('[AI-generated] Summary — W-5 — aialm-oss-sec-analyze\nCREATED: none.', true),
+    ];
+    expect(nextAgentAfterApproval({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'AI', agent: 'none' }, comments)).toBe(
+      'aialm-oss-sec-analyze',
     );
   });
 });

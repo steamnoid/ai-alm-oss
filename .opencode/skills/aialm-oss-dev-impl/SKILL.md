@@ -92,6 +92,29 @@ bash for typecheck/lint/unit.
 MUST NOT: modify AC / QA / contract intent, work item state/priority, create
 work items, open PRs.
 
-## V1.2 — fork feature branch
-Write feature code on the FORK feature branch (`branchForWave`), after `syncFork`; push via `httpsPushUrl`. NEVER touch upstream main. Agent performs repo writes; helpers plan/classify (HOOK/AC slices).
-Each wave works in its own isolated fork clone (`cloneWave` → `.work/<waveKey>/`) so parallel waves never share a working copy.
+## V1.2 — fork feature branch (isolated wave)
+
+All Jira I/O stays on `description` + `comments` (never work-item state beyond the standard transitions). Repo writes are isolated per wave via `shared/git-ops`.
+
+Use deterministic helpers from `src/aialm/oss/shared/git-ops.ts` (pure, unit-tested) — do NOT build raw `https://${GITHUB_TOKEN}@github.com/...` strings ad-hoc:
+
+- `waveKeyFor(issueKey)` → `wellbeingt-5`
+- `branchForWave(issueKey)` → `aialm/wellbeingt-5`
+- `workDirFor(issueKey)` → `.work/wellbeingt-5`
+- `httpsPushUrl(owner, repo, token)` → `https://x-access-token:<token>@github.com/owner/repo.git` (use `redactedPushUrl` for logs)
+- `ensureFork(owner, repo, { client })` → idempotent fork (422 = already forked)
+- `cloneArgs(pushUrl, workDir)` / `checkoutArgs(workDir, branch)` → `git` argv
+
+Shell pattern inside the container (git + GITHUB_TOKEN are available via dispatcher `--env-file .env` and `-v $(pwd):/app`):
+
+```bash
+# fork (idempotent)
+node -e "import('./src/aialm/oss/shared/git-ops.js').then(m=>m.ensureFork('upstreamOwner','repo').then(r=>console.log(r)))"
+# clone + branch
+git clone "$(node -e "import('./src/aialm/oss/shared/git-ops.js').then(m=>console.log(m.httpsPushUrl('forkOwner','repo',process.env.GITHUB_TOKEN)))")" "$(node -e "import('./src/aialm/oss/shared/git-ops.js').then(m=>console.log(m.workDirFor('WELLBEINGT-5')))")"
+git -C .work/wellbeingt-5 checkout -B aialm/wellbeingt-5
+# ... write feature code ...
+git -C .work/wellbeingt-5 push origin aialm/wellbeingt-5
+```
+
+NEVER touch upstream `main` directly. Each wave works in its own `.work/<waveKey>/` clone so parallel waves never share a working copy. Model for all skills: `opencode/big-pickle`.
