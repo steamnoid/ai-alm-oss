@@ -52,9 +52,10 @@ WORKDIR /app
 COPY --from=build --chown=node:node /app /app
 RUN mkdir -p /app/.work && chown node:node /app /app/.work
 USER node
-ENV HOME=/home/node NODE_OPTIONS=--max-old-space-size=512 --expose-gc
+ENV HOME=/home/node
+ENV NODE_OPTIONS="--max-old-space-size=512 --expose-gc"
 # Dispatcher sets the per-container health endpoint via `docker run --health-cmd`;
 # image-level HEALTHCHECK is a fallback (opencode process liveness).
-HEALTHCHECK --interval=15s --timeout=5s --retries=3 --start-period=10s CMD ps aux | grep -q "[o]pencode" || exit 1
+HEALTHCHECK --interval=15s --timeout=5s --retries=3 --start-period=10s CMD cat /proc/*/cmdline 2>/dev/null | tr "\0" " " | grep -q "opencode" || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["npx", "opencode", "run", "--help"]

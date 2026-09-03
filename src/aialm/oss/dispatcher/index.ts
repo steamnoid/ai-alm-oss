@@ -152,7 +152,8 @@ export function buildDockerRunSpec(
   // Deterministic HEALTHCHECK — trivial liveness of the opencode process.
   // Jira status reconcile is owned by the skill, so health is only for
   // container monitoring (docker inspect --format '{{.State.Health.Status}}').
-  args.push('--health-cmd', 'ps aux | grep -q "[o]pencode" || exit 1');
+  // Use /proc to avoid requiring `ps` (procps may not be in older built images).
+  args.push('--health-cmd', 'cat /proc/*/cmdline 2>/dev/null | tr "\\0" " " | grep -q "opencode" || exit 1');
   args.push('--health-interval', '15s');
   args.push('--health-timeout', '5s');
   args.push('--health-retries', '3');
@@ -163,8 +164,10 @@ export function buildDockerRunSpec(
     args.push('-w', '/app');
   }
   if (opts.hostOpencodeConfigDir) {
-    // Mount opencode auth/config for the in-container `opencode run` LLM/Jira access.
-    // Best-effort: host dir may not exist — Docker will create an empty dir, harmless.
+    // Optional mount for opencode LLM auth (host dir). Disabled by default
+    // to avoid overriding the image's project opencode.json MCP jira tokens
+    // with stale host-global config (which caused PAT vs API token mismatch).
+    // Only mount when explicitly requested (e.g. DISPATCH_MOUNT_OPENCODE=1).
     args.push('-v', `${opts.hostOpencodeConfigDir}:/home/node/.config/opencode:ro`);
   }
   // Pass Jira/auth env through the container. Prefer --env-file .env if present on host;

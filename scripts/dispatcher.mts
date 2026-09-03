@@ -85,8 +85,9 @@ async function main(): Promise<void> {
   const limit = typeof args.limit === 'string' ? Number(args.limit) : 20;
   const tail = typeof args.tail === 'string' ? Number(args.tail) : 100;
   const hostCwd = process.cwd();
-  const hostOpencodeDir = join(homedir(), '.config', 'opencode');
-  const opencodeDirExists = existsSync(hostOpencodeDir) && statSync(hostOpencodeDir).isDirectory();
+  // Mount host opencode auth only when explicitly requested (avoids stale jira token override).
+  const hostOpencodeDir = process.env.DISPATCH_MOUNT_OPENCODE ? join(homedir(), '.config', 'opencode') : undefined;
+  const opencodeDirExists = !!hostOpencodeDir && existsSync(hostOpencodeDir) && statSync(hostOpencodeDir).isDirectory();
 
   // --logs=<id>
   if (typeof args.logs === 'string') {
