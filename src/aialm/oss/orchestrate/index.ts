@@ -20,7 +20,7 @@
 import type { JiraClient } from '../adapter/jira.js';
 import type { SelfAwareCids } from '../adapter/fields-config.js';
 import { readStateFromFields, SELF_AWARE_FIELDS } from '../adapter/fields.js';
-import { hasCandidateApproval, type CommentLike } from '../shared/approval.js';
+import { hasCandidateApproval, hasHumanApprovalFor, type CommentLike } from '../shared/approval.js';
 import type { AGENT, STAGE, TicketState } from '../shared/state.js';
 import { isDebugOn } from '../shared/state.js';
 import { markdownToAdf } from '../adapter/adf.js';
@@ -62,6 +62,78 @@ const SCOPE_STAGES: readonly STAGE[] = ['READY', 'AWAITING_HUMAN_APPROVAL'];
 const PICKUP_AGENT: AGENT = 'aialm-oss-po-analyze';
 /** Native stan, w którym tickecik musi przebywać (Backlog). */
 const BACKLOG_STATUS = 'backlog';
+/** Native stan po pracy skilla (czeka na człowieka). */
+const AWAITS_HUMAN_APPROVAL_STATUS = 'awaits human approval';
+
+/** Pickup Konwencja (AGENTS.md tablica pickup) — linear routing post-human-approve. */
+const PICKUP_AFTER_APPROVAL: ReadonlyArray<{ fromSkill: AGENT; toAgent: AGENT }> = [
+  { fromSkill: 'aialm-oss-po-analyze', toAgent: 'aialm-oss-po-prep-decompose' },
+  { fromSkill: 'aialm-oss-po-prep-decompose', toAgent: 'aialm-oss-po-decompose' },
+  { fromSkill: 'aialm-oss-po-decompose', toAgent: 'aialm-oss-qa-analyze' },
+  { fromSkill: 'aialm-oss-qa-analyze', toAgent: 'aialm-oss-arch-analyze' },
+  { fromSkill: 'aialm-oss-arch-analyze', toAgent: 'aialm-oss-sec-analyze' },
+  { fromSkill: 'aialm-oss-sec-analyze', toAgent: 'aialm-oss-dev-analyst' },
+  { fromSkill: 'aialm-oss-dev-analyst', toAgent: 'aialm-oss-dev-impl' },
+  { fromSkill: 'aialm-oss-dev-impl', toAgent: 'aialm-oss-qa-impl' },
+  { fromSkill: 'aialm-oss-qa-impl', toAgent: 'aialm-oss-verify' },
+  { fromSkill: 'aialm-oss-verify', toAgent: 'aialm-oss-pr' },
+] as const;
+
+function extractProposalIds(comments: readonly CommentLike[], skill: string): string[] {
+  const ids: string[] = [];
+  // proposalId to 7-12 hex chars (sha256 slice). Używaj hex-boundary, nie \w+, bo ADF glue może
+  // skleić "...:872f6f02bbcapackageProposalId" — \w+ połknąłby suffix.
+  const re = new RegExp(`${skill.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:([0-9a-f]{7,12})`, 'gi');
+  for (const c of comments) {
+    const body = c.body ?? '';
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(body)) !== null) ids.push(m[1]!.toLowerCase());
+  }
+  return [...new Set(ids)];
+}
+
+function hasApprovedProposalForSkill(comments: readonly CommentLike[], skill: AGENT): boolean {
+  const ids = extractProposalIds(comments, skill);
+  if (ids.length === 0) return false;
+  // Tylko konkretne zatwierdzenie proposal:<id> (reakcja lub APPROVE:<id>).
+  // Generyczny hasCandidateApproval (samo ✅) NIE może tu decydować — inaczej
+  // najwcześniejszy skill z propozycjami zawsze wygrywa i blokuje późniejsze
+  // etapy (np. po-analyze ✅ blokował po-prep-decompose → po-decompose).
+  return ids.some(id => hasHumanApprovalFor(comments, id));
+}
+
+function hasAnyProposalForSkill(comments: readonly CommentLike[], skill: AGENT): boolean {
+  return extractProposalIds(comments, skill).length > 0;
+}
+
+/**
+ * Wyprowadź następnego AGENTa po human-approve.
+ * Sprawdza linearnie pickup table: pierwszy fromSkill z approved proposal wygrywa.
+ * Dla WELLBEINGT-5 (po-analyze proposals + generyczny ✅) approved check musi
+ * uwzględniać candidateApproval jako pokrycie skill-proposals (shared account).
+ * Fallback discover gdy brak skill-proposals ale candidateApproved.
+ */
+export function nextAgentAfterApproval(state: TicketState, comments: readonly CommentLike[]): AGENT | null {
+  // Pickup table — wybierz NAJDALEJ zaawansowany zatwierdzony etap (ostatni match),
+  // nie najwcześniejszy. Dzięki temu po-analyze+po-prep-decompose oba approved → po-decompose.
+  let lastMatch: AGENT | null = null;
+  for (const row of PICKUP_AFTER_APPROVAL) {
+    if (hasApprovedProposalForSkill(comments, row.fromSkill)) lastMatch = row.toAgent;
+  }
+  if (lastMatch) return lastMatch;
+  // Fallback dla po-analyze gdy human dał tylko generyczne ✅ bez APPROVE:<id>
+  // (shared-account dev: isAi-mark rozróżnia). Tylko dla pierwszego etapu.
+  if (hasCandidateApproval(comments)) {
+    if (hasAnyProposalForSkill(comments, 'aialm-oss-po-analyze')) {
+      const poRow = PICKUP_AFTER_APPROVAL.find(r => r.fromSkill === 'aialm-oss-po-analyze');
+      if (poRow) return poRow.toAgent;
+    }
+    // Discover fallback — tylko gdy brak jakichkolwiek propozycji (genuine discover kandydat)
+    const hasAnyProposalAtAll = PICKUP_AFTER_APPROVAL.some(row => hasAnyProposalForSkill(comments, row.fromSkill));
+    if (!hasAnyProposalAtAll && (state.stage === 'READY' || state.stage === 'AWAITING_HUMAN_APPROVAL')) return PICKUP_AGENT;
+  }
+  return null;
+}
 
 /** STAGE → natywny status kanban (name-based, odporne na ID). Jedno źródło prawdy dla kolumn. */
 export const STAGE_NATIVE_STATUS: Record<STAGE, string> = {
@@ -95,6 +167,17 @@ export function candidateApproved(comments: readonly CommentLike[]): boolean {
 export function isInBacklog(fields: Record<string, unknown>): boolean {
   const status = (fields.status as { name?: string } | undefined)?.name;
   return status?.toLowerCase() === BACKLOG_STATUS;
+}
+
+/** Czy native status to AWAITS HUMAN APPROVAL (case-insensitive). */
+export function isInAwaitingHumanApproval(fields: Record<string, unknown>): boolean {
+  const status = (fields.status as { name?: string } | undefined)?.name;
+  return status?.toLowerCase() === AWAITS_HUMAN_APPROVAL_STATUS;
+}
+
+/** Czy ticket jest w legalnym native statusie dla advance (Backlog lub AWAITS HUMAN APPROVAL). */
+export function isInAdvanceSourceStatus(fields: Record<string, unknown>): boolean {
+  return isInBacklog(fields) || isInAwaitingHumanApproval(fields);
 }
 
 /** Usuń label `candidate` (jeśli obecny), zachowując pozostałe obce labele. */
@@ -135,34 +218,48 @@ export async function advanceOne(
     const status = nativeStatus(fields);
     const stateStr = compactState(state);
 
-    // Warunek wejścia: wygaszony przegląd — najpierw bramka krotki (discover).
+    // Warunek wejścia: wygaszony przegląd — najpierw bramka krotki (discover i ogólny post-approve).
+    // STAGE∈{READY,AWAITING_HUMAN_APPROVAL} + ROLE=AI + AGENT=none, źródło = Backlog lub AWAITS HUMAN APPROVAL.
     if (!inferGate(state)) {
       return {
         key,
         status,
         state: stateStr,
         result: 'NOT_CANDIDATE',
-        detail: `poza bramką discover: krotka ${stateStr} (oczekiwano READY lub AWAITING_HUMAN_APPROVAL / AI / none)`,
+        detail: `poza bramką discover/post-approve: krotka ${stateStr} (oczekiwano READY lub AWAITING_HUMAN_APPROVAL / AI / none)`,
       };
     }
-    if (!isInBacklog(fields)) {
+    if (!isInAdvanceSourceStatus(fields)) {
       return {
         key,
         status,
         state: stateStr,
         result: 'OUT_OF_SCOPE',
-        detail: `status=${status} (wymagany Backlog)`,
+        detail: `status=${status} (wymagany Backlog lub AWAITS HUMAN APPROVAL)`,
       };
     }
 
     const comments = await jira.listComments(key);
-    if (!candidateApproved(comments)) {
-      return { key, status, state: stateStr, result: 'NO_APPROVAL', detail: 'brak ludzkiego zatwierdzenia (✅)' };
+    // Rozstrzygnij następnego agenta wg konwencji pickup (AGENTS.md tablica).
+    // Jedno źródło: nextAgentAfterApproval bada linearnie pickup table (approved proposals)
+    // i fallback discover. Odporne na READY vs AWAITING_HUMAN_APPROVAL podmiany.
+    const nextAgent = nextAgentAfterApproval(state, comments);
+    if (!nextAgent) {
+      return {
+        key,
+        status,
+        state: stateStr,
+        result: 'NO_APPROVAL',
+        detail:
+          state.stage === 'READY'
+            ? 'brak ludzkiego zatwierdzenia (✅) dla kandydata'
+            : 'brak zatwierdzonej propozycji (✅/APPROVE:<id>) dla któregokolwiek etapu pickup',
+      };
     }
 
-    // Pickup: STAGE=AWAITING_AGENT_PICKUP, ROLE=null (AI handoff transient → null), AGENT=po-analyze.
+    // Pickup: STAGE=AWAITING_AGENT_PICKUP, ROLE=null (AI handoff transient → null), AGENT=nextAgent.
     // Atomowo: krotka + natywny status kanban (AWAITS AGENT PICKUP).
-    const target: TicketState = { stage: 'AWAITING_AGENT_PICKUP', role: null, agent: PICKUP_AGENT };
+    const target: TicketState = { stage: 'AWAITING_AGENT_PICKUP', role: null, agent: nextAgent };
     const targetNative = stageNativeStatus(target.stage);
     // Snapshot do rollbacku (krotka + labele + natywny status)
     const prevLabels = await jira.getLabels(key);

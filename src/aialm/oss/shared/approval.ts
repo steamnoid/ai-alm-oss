@@ -43,10 +43,13 @@ export function hasHumanApprovalFor(
   const gating = opts?.gatingEmojis ?? ['✅', '👍'];
 
   for (const c of comments) {
-    // Reakcja human na KOMENTARZU AI: ludzka reakcja na komentarzu, który
-    // niesie proposal:<id>, jest aprobatą (kanał akceptacji). Samo ciało
-    // komentarza AI nigdy nie zatwierdza.
-    if (c.isAi) {
+    // W dev AI i human dzielą konto — tylko strict AI (isAi + AI-mark) to proposal AI.
+    // Komentarz isAi ale bez AI-mark (np. "APPROVE:872f..." od shared account) traktuj jako human.
+    const isStrictAi = c.isAi && isAiMarked(c.body);
+    if (isStrictAi) {
+      // Reakcja human na KOMENTARZU AI: ludzka reakcja na komentarzu, który
+      // niesie proposal:<id>, jest aprobatą (kanał akceptacji). Samo ciało
+      // komentarza AI nigdy nie zatwierdza.
       if (c.body?.includes(`proposal:${id}`) && c.reactions?.some(r => !r.isAi && gating.includes(r.emoji))) {
         return true;
       }
