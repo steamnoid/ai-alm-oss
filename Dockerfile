@@ -51,7 +51,11 @@ FROM base AS runtime
 WORKDIR /app
 COPY --from=build --chown=node:node /app /app
 RUN mkdir -p /app/.work && chown node:node /app /app/.work
+# Pre-cache mcp-atlassian for the runtime user (node) to avoid 30s cold-start download on first dispatch.
+# Also ensure opencode auth dirs exist for the node user (for github-copilot etc. mounts).
 USER node
+RUN mkdir -p /home/node/.local/share/opencode && mkdir -p /home/node/.config/opencode && chmod 700 /home/node/.local/share/opencode 2>/dev/null || true
+RUN uvx mcp-atlassian --help >/dev/null 2>&1 || true
 ENV HOME=/home/node
 ENV NODE_OPTIONS="--max-old-space-size=512 --expose-gc"
 # Dispatcher sets the per-container health endpoint via `docker run --health-cmd`;

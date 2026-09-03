@@ -114,9 +114,15 @@ export function labelFor(key: string): string {
  * Host mounts:
  *   - `$(pwd)` → `/app` (repo + .work + scripts)
  *   - `$(pwd)/.env` via `--env-file` (JIRA + tokens) — mount, not baked
- *   - `~/.config/opencode` → `/home/node/.config/opencode:ro` (opencode auth, if present)
+ *   - optional opencode auth file / corrected opencode.json (see below)
  *
  * The skill inside does all Jira I/O; host only starts the container.
+ * Jira MCP fix: the project's opencode.json has two servers (`jira`=paligakrzychu,
+ * `jira-oss`=ai-alm-oss); the `jira` server is for the wrong site for WELLBEINGT
+ * (ai-alm-oss) and causes PAT errors when the LLM calls `jira_jira_*` for
+ * WELLBEINGT-5. The dispatcher can mount a corrected `opencode.json` where
+ * `jira` points to the dispatch target site (JIRA_SITE from .env, currently
+ * ai-alm-oss) so `jira_jira_*` is correct. See `correctedOpencodeConfig`.
  */
 export function buildDockerRunSpec(
   job: DispatchJob,
@@ -127,6 +133,14 @@ export function buildDockerRunSpec(
     hostCwd?: string;
     /** host path to opencode config dir (default: ~/.config/opencode) */
     hostOpencodeConfigDir?: string;
+    /** host path to a corrected opencode.json to mount as /app/opencode.json (Jira site fix) */
+    hostOpencodeConfigPath?: string;
+    /** host path to opencode auth.json to mount for LLM auth (file, not dir) */
+    hostOpencodeAuthPath?: string;
+    /** host path to opencode local auth dir file (e.g. ~/.local/share/opencode/auth.json) for github-copilot etc. */
+    hostOpencodeLocalAuthPath?: string;
+    /** model to pass as `opencode run --model <model>` (e.g. opencode/muse-spark-1.2) */
+    model?: string;
     /** extra suffix for container name (test seam) */
     nameSuffix?: string;
     /** extra docker args (test seam) */
@@ -170,6 +184,18 @@ export function buildDockerRunSpec(
     // Only mount when explicitly requested (e.g. DISPATCH_MOUNT_OPENCODE=1).
     args.push('-v', `${opts.hostOpencodeConfigDir}:/home/node/.config/opencode:ro`);
   }
+  if (opts.hostOpencodeAuthPath) {
+    // Mount only the auth file (for LLM), not the whole config dir, so jira MCP stays corrected.
+    args.push('-v', `${opts.hostOpencodeAuthPath}:/home/node/.config/opencode/auth.json:ro`);
+  }
+  if (opts.hostOpencodeLocalAuthPath) {
+    // Mount the local share auth.json for github-copilot etc. (provider oauth).
+    args.push('-v', `${opts.hostOpencodeLocalAuthPath}:/home/node/.local/share/opencode/auth.json:ro`);
+  }
+  if (opts.hostOpencodeConfigPath) {
+    // Mount corrected opencode.json (single `jira` MCP pointing to dispatch target site).
+    args.push('-v', `${opts.hostOpencodeConfigPath}:/app/opencode.json:ro`);
+  }
   // Pass Jira/auth env through the container. Prefer --env-file .env if present on host;
   // we still add --env-file arg when hostCwd is set (file is at <hostCwd>/.env).
   if (opts.hostCwd) {
@@ -180,9 +206,45 @@ export function buildDockerRunSpec(
 
   args.push(image);
   // Skill entrypoint — skill handles all Jira transitions inside.
-  args.push('npx', 'opencode', 'run', skill, job.key);
+  if (opts.model) {
+    args.push('npx', 'opencode', 'run', '--model', opts.model, skill, job.key);
+  } else {
+    args.push('npx', 'opencode', 'run', skill, job.key);
+  }
 
   return { args, containerName: name, label: labelFor(job.key) };
+}
+
+/** Generate a corrected opencode.json for the dispatch container where `jira` points to the dispatch target site. */
+export function correctedOpencodeConfig(jiraSite: string, opts: { jiraEmailEnv?: string; jiraTokenEnv?: string } = {}): string {
+  const emailEnv = opts.jiraEmailEnv ?? 'JIRA_EMAIL';
+  const tokenEnv = opts.jiraTokenEnv ?? 'JIRA_TOKEN';
+  const cfg = {
+    $schema: 'https://opencode.ai/config.json',
+    permission: { external_directory: { '~/Develop/*': 'allow' } },
+    mcp: {
+      jira: {
+        type: 'local',
+        command: ['uvx', 'mcp-atlassian'],
+        environment: {
+          JIRA_URL: jiraSite,
+          JIRA_USERNAME: `{env:${emailEnv}}`,
+          JIRA_API_TOKEN: `{env:${tokenEnv}}`,
+          // Minimal toolsets to avoid the failing Service Desk / third-party token endpoint.
+          // The full MCP default includes jira_service_desk which calls a Jira endpoint
+          // that does not support PAT for this Cloud user type (private relay email).
+          // Keep only the toolsets needed for po-analyze / generic skills.
+          TOOLSETS: 'jira_issues,jira_comments,jira_fields',
+        },
+        enabled: true,
+      },
+    },
+  };
+  // Also try minimal toolsets first; if that fails, the full list is above.
+  // For now, keep the corrected config minimal to avoid the third-party token endpoint.
+  // The MCP will only load jira_issues and jira_comments by default if TOOLSETS is not set,
+  // but we explicitly set it to avoid the failing service desk check.
+  return JSON.stringify(cfg, null, 2);
 }
 
 /** CLI helper: parse `docker ps -a` / `docker inspect` lines into status rows. */

@@ -18,9 +18,10 @@
  *   npm run dispatcher -- --logs=<container|key>             # docker logs --tail 100
  */
 import { spawnSync, spawn } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { JiraClient } from '../src/aialm/oss/adapter/jira.js';
 import { loadDotEnv, jiraConfig } from '../src/aialm/oss/adapter/config.js';
 import { ensureSelfAwareFields } from '../src/aialm/oss/adapter/fields-config.js';
@@ -28,6 +29,7 @@ import {
   scanPickupTickets,
   buildDockerRunSpec,
   parseInspectJson,
+  correctedOpencodeConfig,
   DISPATCH_LABEL,
   DISPATCH_IMAGE_DEFAULT,
 } from '../src/aialm/oss/dispatcher/index.js';
@@ -88,6 +90,26 @@ async function main(): Promise<void> {
   // Mount host opencode auth only when explicitly requested (avoids stale jira token override).
   const hostOpencodeDir = process.env.DISPATCH_MOUNT_OPENCODE ? join(homedir(), '.config', 'opencode') : undefined;
   const opencodeDirExists = !!hostOpencodeDir && existsSync(hostOpencodeDir) && statSync(hostOpencodeDir).isDirectory();
+  // Corrected opencode.json where `jira` MCP points to the dispatch target site (JIRA_SITE, e.g. ai-alm-oss)
+  // so `jira_jira_*` is correct for WELLBEINGT. Without this, `jira` would be paligakrzychu and fail for ai-alm-oss.
+  const jiraSite = process.env.JIRA_SITE?.trim() ?? 'https://ai-alm-oss.atlassian.net';
+  const opencodeAuthPath = join(homedir(), '.config', 'opencode', 'auth.json');
+  const opencodeAuthExists = existsSync(opencodeAuthPath);
+  const opencodeLocalAuthPath = join(homedir(), '.local', 'share', 'opencode', 'auth.json');
+  const opencodeLocalAuthExists = existsSync(opencodeLocalAuthPath);
+  const dispatchModel = process.env.OPENCODE_MODEL ?? process.env.AIALM_MODEL ?? undefined;
+  // Write corrected config to a temp file and mount as /app/opencode.json (single `jira` MCP, correct site).
+  const correctedConfigPath = join(tmpdir(), `aialm-dispatch-${project ?? 'unknown'}-${Date.now()}.json`);
+  let correctedConfigMounted: string | undefined;
+  if (project) {
+    try {
+      mkdirSync(tmpdir(), { recursive: true });
+      writeFileSync(correctedConfigPath, correctedOpencodeConfig(jiraSite), 'utf8');
+      correctedConfigMounted = correctedConfigPath;
+    } catch {
+      correctedConfigMounted = undefined;
+    }
+  }
 
   // --logs=<id>
   if (typeof args.logs === 'string') {
@@ -204,7 +226,17 @@ async function main(): Promise<void> {
     for (const t of tickets) {
       const spec = buildDockerRunSpec(
         { key: t.key, agent: t.agent },
-        { projectKey: project, image, hostCwd: hostCwd, hostOpencodeConfigDir: opencodeDirExists ? hostOpencodeDir : undefined, nameSuffix: 'dry' },
+        {
+          projectKey: project,
+          image,
+          hostCwd: hostCwd,
+          hostOpencodeConfigDir: opencodeDirExists ? hostOpencodeDir : undefined,
+          hostOpencodeConfigPath: correctedConfigMounted,
+          hostOpencodeAuthPath: opencodeAuthExists ? opencodeAuthPath : undefined,
+          hostOpencodeLocalAuthPath: opencodeLocalAuthExists ? opencodeLocalAuthPath : undefined,
+          model: dispatchModel,
+          nameSuffix: 'dry',
+        },
       );
       console.log(`  would run: docker ${spec.args.join(' ')}`);
     }
@@ -215,7 +247,16 @@ async function main(): Promise<void> {
   for (const t of tickets) {
     const spec = buildDockerRunSpec(
       { key: t.key, agent: t.agent },
-      { projectKey: project, image, hostCwd: hostCwd, hostOpencodeConfigDir: opencodeDirExists ? hostOpencodeDir : undefined },
+      {
+        projectKey: project,
+        image,
+        hostCwd: hostCwd,
+        hostOpencodeConfigDir: opencodeDirExists ? hostOpencodeDir : undefined,
+        hostOpencodeConfigPath: correctedConfigMounted,
+        hostOpencodeAuthPath: opencodeAuthExists ? opencodeAuthPath : undefined,
+        hostOpencodeLocalAuthPath: opencodeLocalAuthExists ? opencodeLocalAuthPath : undefined,
+        model: dispatchModel,
+      },
     );
     console.log(`\n→ dispatch ${t.key} (${t.agent}) → container ${spec.containerName}`);
     console.log(`  docker ${spec.args.join(' ')}`);
