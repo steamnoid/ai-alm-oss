@@ -38,7 +38,7 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
 
 ## Flow
 
-1. Load target + approved AC; guard: no AC → Blocked per target.
+1. Load target (description + comments) + approved AC; guard: no AC → Blocked per target.
 2. Findings (title + body) per target.
 3. Post one Proposal per finding (`aialm-oss-arch-analyze:<id>` + `proposal:<id>`), assign the **ARCH** role owner (or DEV + 'arch-aware' note when off).
 4. Summary.
@@ -51,4 +51,4 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
 
 ## Idempotency / Tooling
 
-Skip identical id; MUST NOT: self-approve, invent concerns, modify AC/state. Allow: retrieve, comment list/create, assign.
+Skip identical id; MUST NOT: self-approve, invent concerns, modify AC/state. Allow: retrieve (description + comments), comment list/create, assign.

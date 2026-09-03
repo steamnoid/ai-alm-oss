@@ -48,7 +48,7 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
 
 ## Input assembly
 
-- Product AC section; GENERATED QA scenarios (metadata).
+- Target description + comments; Product AC section; GENERATED QA scenarios (metadata).
 - Project AI Profile conventions (coding/testing conventions, structure, CI
   commands) constrain which seams are acceptable in THIS repository.
 - Existing codebase is context only — never the requirement.
@@ -92,7 +92,7 @@ optional CREATIVE per run. OPEN/BLOCKING for missing product decisions.
 
 ## Tooling / MCP
 
-Allow: retrieve, list children, comment list/create, reaction list (read),
+Allow: retrieve (description + comments), list children, comment list/create, reaction list (read),
 Profile read.
 MUST NOT: modify description/state/labels, create work items, write tests/app
 code, merge the contract (that is dev-update-approved).

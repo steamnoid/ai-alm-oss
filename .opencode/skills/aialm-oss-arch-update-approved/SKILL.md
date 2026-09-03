@@ -38,7 +38,7 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
 
 ## Flow
 
-1. Select approved proposals (`aialm-oss-arch-analyze:<id>` + `proposal:<id>` + hasHumanApprovalFor).
+1. Load target description + comments; select approved proposals from comments (`aialm-oss-arch-analyze:<id>` + `proposal:<id>` + hasHumanApprovalFor on comments/reactions).
 2. Build `## Architecture Review` block (`ARCH hash:`) and merge (preserve outside content).
 3. Summary; assignee-hygiene.
 

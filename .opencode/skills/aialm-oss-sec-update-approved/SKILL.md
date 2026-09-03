@@ -38,7 +38,7 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
 
 ## Flow
 
-1. Select approved proposals (`aialm-oss-sec-analyze:<id>` + `proposal:<id>` + hasHumanApprovalFor).
+1. Load target description + comments; select approved proposals from comments (`aialm-oss-sec-analyze:<id>` + `proposal:<id>` + hasHumanApprovalFor on comments/reactions).
 2. Build the `## Security Review` block (`SEC hash:`) and merge into the target description (preserve outside content).
 3. Summary comment APPLIED/SKIPPED/BLOCKED; assignee-hygiene (unassign when nothing undecided).
 

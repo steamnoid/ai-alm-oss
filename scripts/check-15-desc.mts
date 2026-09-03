@@ -1,0 +1,10 @@
+import {JiraClient} from '../src/aialm/oss/adapter/jira.ts';
+import {jiraConfig, loadDotEnv} from '../src/aialm/oss/adapter/config.ts';
+import {adfToPlainText} from '../src/aialm/oss/adapter/adf.ts';
+loadDotEnv();
+const jira=new JiraClient({config:jiraConfig()});
+const iss=await jira.getIssue('WELLBEINGT-15',['description','summary'] as any);
+const f=iss.fields as any;
+console.log(f.summary);
+console.log('---desc plain---');
+console.log(adfToPlainText(f.description).slice(0,2000));
