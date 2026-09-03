@@ -18,8 +18,8 @@ export const STAGES = [
 
 export type STAGE = (typeof STAGES)[number];
 
-/** ROLE są skalarne: jeden aktywny opiekun w danym momencie. */
-export const ROLES = ['PO', 'DEV', 'QA', 'SEC', 'ARCH'] as const;
+/** ROLE są skalarne: jeden aktywny opiekun w danym momencie. `AI` = człowiek przekazał ticket AI/orchestratorowi. */
+export const ROLES = ['PO', 'DEV', 'QA', 'SEC', 'ARCH', 'AI'] as const;
 export type ROLE = (typeof ROLES)[number];
 
 /**
@@ -107,6 +107,10 @@ export function assertConsistent(state: TicketState): string[] {
   if (state.stage === 'DONE' && state.role !== null) {
     errors.push('DONE must have no active role');
   }
+  // AI to rola transient: wyłącznie przy AGENT=none (handoff człowiek→AI przed pickup).
+  if (state.role === 'AI' && state.agent !== 'none') {
+    errors.push('ROLE=AI requires AGENT=none (transient handoff)');
+  }
 
   return errors;
 }
@@ -157,7 +161,16 @@ export function isLegalTransition(from: STAGE, to: STAGE): boolean {
  */
 export const IMMUTABLE_STATUS_LABEL_PREFIX = 'aialm:';
 
-/** Zwraca label reprezentujący wartość wymiaru (np. STAGE → `aialm:stage:awaiting-human-approval`). */
+/** Per-ticket DEBUG governance flag — label marker, default ON (brak obu = on). */
+export const DEBUG_LABEL_ON = 'aialm:debug:on';
+export const DEBUG_LABEL_OFF = 'aialm:debug:off';
+export const DEBUG_LABEL_PREFIX = 'aialm:debug:';
+
+/** Czy DEBUG jest włączony dla ticketa (per-ticket label, default on). */
+export function isDebugOn(labels: readonly string[]): boolean {
+  if (labels.includes(DEBUG_LABEL_OFF)) return false;
+  return true;
+}
 export function statusLabel(dimension: 'stage' | 'role', value: string): string {
   return `${IMMUTABLE_STATUS_LABEL_PREFIX}${dimension}:${value
     .toLowerCase()

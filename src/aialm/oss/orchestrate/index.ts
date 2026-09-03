@@ -1,25 +1,29 @@
 /**
- * aialm-oss-orchestrate — background gate-advance poller (ograniczony zakres).
+ * aialm-oss-orchestrate — single-pass gate-advance (ograniczony zakres, argument-based).
  *
  * Bramka DISCOVER_APPROVED (kandydat discover zatwierdzony, w Backlogu):
  *   wejście  (WSZYSTKIE): native status = Backlog  AND
- *                         STAGE=READY / ROLE=PO / AGENT=none  AND
+ *                         STAGE=READY / ROLE=AI / AGENT=none  AND
  *                         ludzkie zatwierdzenie kandydata (hasCandidateApproval)
  *   wyjście:            STAGE=AWAITING_AGENT_PICKUP / ROLE=null / AGENT=aialm-oss-po-analyze
- *                         + usunięcie labela `candidate`
- *                         + native kanban → kolumna (default "AWAITS AGENT PICKUP")
+ *                         + native status AWAITS AGENT PICKUP + usunięcie labela `candidate`
+ *                         (atomowo: krotka + natywny status/kanban)
  *
  * Źródło prawdy = custom fields (AIALM STAGE/ROLE/AGENT). Labele aialm:*
  * to TYLKO sync z pól (stateLabels/syncStateLabels) — NIGDY odwrotnie.
- * ROLE=null: PO nie jest już odpowiedzialny za tickecik w tym momencie
- * (AWAITING_AGENT_PICKUP z role:null jest spójne — invariant wymaga tylko AGENT≠none).
- * Gdy docelowa kolumna nie istnieje → MISSING_COLUMN (zwrotka).
+ * ROLE=AI to transient handoff: człowiek ustawia AI w AIALM ROLE by oddać pracę
+ * orchestratorowi; po pickup ROLE wraca do null (invariant ROLE tylko przy
+ * AWAITING_HUMAN_APPROVAL, a przy AWAITING_AGENT_PICKUP ROLE=null).
+ * Orchestrator atomowo syncuje krotkę i natywny status kanban wg mapy STAGE→status
+ * (Backlog/AWAITS AGENT PICKUP/AGENT WORKING/AWAITS HUMAN APPROVAL/Done).
  */
 import type { JiraClient } from '../adapter/jira.js';
-import { ensureSelfAwareFields, type SelfAwareCids } from '../adapter/fields-config.js';
+import type { SelfAwareCids } from '../adapter/fields-config.js';
 import { readStateFromFields, SELF_AWARE_FIELDS } from '../adapter/fields.js';
 import { hasCandidateApproval, type CommentLike } from '../shared/approval.js';
 import type { AGENT, STAGE, TicketState } from '../shared/state.js';
+import { isDebugOn } from '../shared/state.js';
+import { markdownToAdf } from '../adapter/adf.js';
 
 /**
  * Map CID-keyed fields (from getIssue with CID queries) to name-keyed fields
@@ -42,7 +46,6 @@ export type AdvanceResult =
   | 'NO_APPROVAL'
   | 'OUT_OF_SCOPE'
   | 'NOT_CANDIDATE'
-  | 'MISSING_COLUMN'
   | 'ERROR';
 
 export interface AdvanceRow {
@@ -53,11 +56,6 @@ export interface AdvanceRow {
   detail?: string;
 }
 
-export interface OrchestrateReport {
-  projectKey: string;
-  rows: AdvanceRow[];
-}
-
 /** Bramka: kandydat discover — AWAITING_HUMAN_APPROVAL lub READY (oba „gotowy do pickupu”). */
 const SCOPE_STAGES: readonly STAGE[] = ['READY', 'AWAITING_HUMAN_APPROVAL'];
 /** AGENT picku dla discover-kandydata (konwencja → po-analyze; ROLE emissji=null). */
@@ -65,12 +63,27 @@ const PICKUP_AGENT: AGENT = 'aialm-oss-po-analyze';
 /** Native stan, w którym tickecik musi przebywać (Backlog). */
 const BACKLOG_STATUS = 'backlog';
 
+/** STAGE → natywny status kanban (name-based, odporne na ID). Jedno źródło prawdy dla kolumn. */
+export const STAGE_NATIVE_STATUS: Record<STAGE, string> = {
+  IDLE: 'Backlog',
+  READY: 'Backlog',
+  AWAITING_AGENT_PICKUP: 'AWAITS AGENT PICKUP',
+  IN_PROGRESS_BY_AGENT: 'AGENT WORKING',
+  AWAITING_HUMAN_APPROVAL: 'AWAITS HUMAN APPROVAL',
+  DONE: 'Done',
+};
+
+export function stageNativeStatus(stage: STAGE): string {
+  return STAGE_NATIVE_STATUS[stage];
+}
+
 /**
- * Ograniczony inferGate: STAGE∈{READY,AWAITING_HUMAN_APPROVAL}, ROLE=PO, AGENT=none
+ * Ograniczony inferGate: STAGE∈{READY,AWAITING_HUMAN_APPROVAL}, ROLE=AI, AGENT=none
  * (odczyt z custom fields, nie z labeli — labele to pochodna pól). Inny kształt => false.
+ * ROLE=AI to explicit handoff człowieka → orchestrator (replace PO; AI transient).
  */
 export function inferGate(state: TicketState): boolean {
-  return (SCOPE_STAGES as readonly string[]).includes(state.stage) && state.role === 'PO' && state.agent === 'none';
+  return (SCOPE_STAGES as readonly string[]).includes(state.stage) && state.role === 'AI' && state.agent === 'none';
 }
 
 /** Czy kandydat ma ludzkie zatwierdzenie (semantyka discovery-gate). */
@@ -82,13 +95,6 @@ export function candidateApproved(comments: readonly CommentLike[]): boolean {
 export function isInBacklog(fields: Record<string, unknown>): boolean {
   const status = (fields.status as { name?: string } | undefined)?.name;
   return status?.toLowerCase() === BACKLOG_STATUS;
-}
-
-/** Lista WSZYSTKICH ticketów w projekcie (JQL po projekcie — unikamy duplikatów custom field i label drift). */
-async function listProjectIssues(jira: JiraClient, projectKey: string): Promise<string[]> {
-  const jql = `project = ${projectKey}`;
-  const issues = await jira.searchJql(jql, ['key']);
-  return issues.map(i => (i as any).key as string);
 }
 
 /** Usuń label `candidate` (jeśli obecny), zachowując pozostałe obce labele. */
@@ -107,14 +113,15 @@ function nativeStatus(fields: Record<string, unknown>): string {
 }
 
 /**
- * Jedno przejście dla jednego kandydata. `statuses` = native kolumny projektu
- * (rozwiązane raz na projekt, nie per issue). Zwraca wiersz raportu —
+ * Jedno przejście dla jednego kandydata. Zwraca wiersz raportu —
  * ZAWSZE z `status` i zwartą `state` (krotka z custom fields), niezależnie od wyniku.
+ * Orchestrator mutuje atomowo krotkę (custom fields + syncStateLabels) i natywny
+ * status kanban (transition wg STAGE_NATIVE_STATUS).
  */
 export async function advanceOne(
   jira: JiraClient,
   key: string,
-  opts: { cids: SelfAwareCids; targetColumn: string; statuses: string[] },
+  opts: { cids: SelfAwareCids },
 ): Promise<AdvanceRow> {
   try {
     const issue = (await jira.getIssue(key, [
@@ -135,7 +142,7 @@ export async function advanceOne(
         status,
         state: stateStr,
         result: 'NOT_CANDIDATE',
-        detail: `poza bramką discover: krotka ${stateStr} (oczekiwano READY lub AWAITING_HUMAN_APPROVAL / PO / none)`,
+        detail: `poza bramką discover: krotka ${stateStr} (oczekiwano READY lub AWAITING_HUMAN_APPROVAL / AI / none)`,
       };
     }
     if (!isInBacklog(fields)) {
@@ -153,30 +160,56 @@ export async function advanceOne(
       return { key, status, state: stateStr, result: 'NO_APPROVAL', detail: 'brak ludzkiego zatwierdzenia (✅)' };
     }
 
-    // Pickup: STAGE=AWAITING_AGENT_PICKUP, ROLE=null (PO już nie odpowiada), AGENT=po-analyze.
+    // Pickup: STAGE=AWAITING_AGENT_PICKUP, ROLE=null (AI handoff transient → null), AGENT=po-analyze.
+    // Atomowo: krotka + natywny status kanban (AWAITS AGENT PICKUP).
     const target: TicketState = { stage: 'AWAITING_AGENT_PICKUP', role: null, agent: PICKUP_AGENT };
-    await jira.updateState(key, target, opts.cids);
-    await dropCandidateLabel(jira, key);
-
-    // Native kanban: tylko jeśli kolumna istnieje; inaczej zwrotka.
-    const hasColumn = opts.statuses.some(s => s.toLowerCase() === opts.targetColumn.toLowerCase());
-    if (!hasColumn) {
-      return {
-        key,
-        status,
-        state: stateStr,
-        result: 'MISSING_COLUMN',
-        detail: `brak kolumny '${opts.targetColumn}' — krotka przestawiona na ${compactState(target)}, candidate usunięty`,
-      };
+    const targetNative = stageNativeStatus(target.stage);
+    // Snapshot do rollbacku (krotka + labele + natywny status)
+    const prevLabels = await jira.getLabels(key);
+    const prevNative = nativeStatus(fields);
+    let didTransition = false;
+    try {
+      await jira.updateState(key, target, opts.cids);
+      // Native status sync — jeśli jeszcze nie na docelowym
+      if (prevNative.toLowerCase() !== targetNative.toLowerCase()) {
+        const transitions = await jira.getTransitions(key);
+        const t = transitions.find(tr => (tr.to?.name ?? '').toLowerCase() === targetNative.toLowerCase());
+        if (!t) {
+          throw new Error(`brak natywnego transition do '${targetNative}' (dostępne: ${transitions.map(x => x.to?.name).filter(Boolean).join(', ') || 'brak'})`);
+        }
+        await jira.transitionIssue(key, t.id);
+        didTransition = true;
+      }
+      await dropCandidateLabel(jira, key);
+    } catch (e) {
+      // Rollback atomowy (best-effort) — przywróć poprzedni stan, status i labele
+      try {
+        await jira.updateState(key, state, opts.cids);
+        if (didTransition) {
+          try {
+            const transitions = await jira.getTransitions(key);
+            const back = transitions.find(tr => (tr.to?.name ?? '').toLowerCase() === prevNative.toLowerCase());
+            if (back) await jira.transitionIssue(key, back.id);
+          } catch {
+            // rollback natywnego statusu best-effort
+          }
+        }
+        const curLabels = await jira.getLabels(key);
+        if (JSON.stringify(curLabels) !== JSON.stringify(prevLabels)) {
+          await jira.setLabels(key, prevLabels);
+        }
+      } catch {
+        // rollback best-effort — nie maskuj pierwotnego błędu
+      }
+      throw e;
     }
-
-    await jira.transitionIssue(key, opts.targetColumn);
+    const nativeDetail = prevNative.toLowerCase() !== targetNative.toLowerCase() ? `native ${prevNative} → ${targetNative}` : `native ${targetNative}`;
     return {
       key,
-      status,
+      status: targetNative,
       state: stateStr,
       result: 'PICKUP_OK',
-      detail: `pickup → ${compactState(target)}, native ${status} → ${opts.targetColumn}`,
+      detail: `pickup → ${compactState(target)} (${nativeDetail})`,
     };
   } catch (e) {
     // Przy błędzie spróbuj ustalić status/state do raportu, jeśli to możliwe
@@ -184,34 +217,18 @@ export async function advanceOne(
   }
 }
 
-/**
- * Jedna iteracja orchestru dla PODANYCH projektów (klienci z parametru CLI,
- * nie z rejestru). Zwrotka zawiera **wszystkie** tickety projektu z powodem
- * przeniesienia / nieprzeniesienia oraz native `status` i zwartą `state`.
- */
-export async function runOnce(
-  jira: JiraClient,
-  projectKeys: readonly string[],
-  opts: { targetColumn?: string },
-): Promise<OrchestrateReport[]> {
-  const targetColumn = opts.targetColumn ?? 'AWAITS AGENT PICKUP';
-  const reports: OrchestrateReport[] = [];
-  for (const projectKey of projectKeys) {
-    try {
-      const cids = await ensureSelfAwareFields(jira, projectKey);
-      const statuses = await jira.listStatuses(projectKey);
-      const keys = await listProjectIssues(jira, projectKey);
-      const rows: AdvanceRow[] = [];
-      for (const key of keys) {
-        rows.push(await advanceOne(jira, key, { cids, targetColumn, statuses }));
-      }
-      reports.push({ projectKey, rows });
-    } catch (e) {
-      reports.push({
-        projectKey,
-        rows: [{ key: '—', status: '—', state: '—/—/—', result: 'ERROR', detail: (e as Error).message }],
-      });
-    }
+/** Eksport dla CLI single-ticket (orchestrate-ticket.mts) — best-effort DEBUG per-ticket. */
+export async function logDebugForRow(jira: JiraClient, row: AdvanceRow): Promise<boolean> {
+  try {
+    const labels = await jira.getLabels(row.key);
+    if (!isDebugOn(labels)) return false;
+    const body =
+      `[AI-generated] Orchestrate — ${row.key} — DEBUG: ${row.result}` +
+      (row.detail ? ` — ${row.detail}` : '') +
+      `\n\nStan: ${row.status} | ${row.state}`;
+    await jira.addComment(row.key, markdownToAdf(body));
+    return true;
+  } catch {
+    return false;
   }
-  return reports;
 }

@@ -29,13 +29,19 @@ describe('project key derivation', () => {
 describe('governance parse/render', () => {
   it('parses roles and flags from rendered output', () => {
     const md = renderGovernance(
-      { po: 'lead-1', qa: 'lead-1', dev: 'lead-1', sec: 'sec-9' },
+      { po: 'lead-1', qa: 'lead-1', dev: 'lead-1', sec: 'sec-9', ai: 'lead-1' },
       { sec: false, arch: true },
       'lead-1',
     );
     const parsed = parseGovernance(md);
-    expect(parsed.roles).toMatchObject({ po: 'lead-1', dev: 'lead-1', sec: 'sec-9' });
+    expect(parsed.roles).toMatchObject({ po: 'lead-1', dev: 'lead-1', sec: 'sec-9', ai: 'lead-1' });
     expect(parsed.flags).toEqual({ sec: false, arch: true });
+  });
+
+  it('parses ai role and round-trips', () => {
+    const md = renderGovernance({ po: 'a', qa: 'a', dev: 'a', ai: 'ai-9' }, { sec: true, arch: true }, 'a');
+    expect(parseGovernance(md).roles.ai).toBe('ai-9');
+    expect(md).toContain('ai: ai-9');
   });
 
   it('sec/arch default on when absent', () => {

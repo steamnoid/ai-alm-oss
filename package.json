@@ -15,7 +15,7 @@
     "onboard": "tsx scripts/onboard.mts",
     "discover": "tsx scripts/discover.mts",
     "notes": "tsx scripts/notes-onboard-discover.mts",
-    "orchestrate": "tsx scripts/orchestrate.mts"
+    "orchestrate:ticket": "tsx scripts/orchestrate-ticket.mts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

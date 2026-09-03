@@ -60,6 +60,16 @@ describe('state machine invariants', () => {
     expect(isConsistent({ stage: 'DONE', role: 'PO', agent: 'none' })).toBe(false);
   });
 
+  it('ROLE=AI is transient: READY/AWAITING_HUMAN_APPROVAL + none consistent, with agent inconsistent', () => {
+    expect(isConsistent({ stage: 'READY', role: 'AI', agent: 'none' })).toBe(true);
+    expect(isConsistent({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'AI', agent: 'none' })).toBe(true);
+    expect(stateLabels({ stage: 'READY', role: 'AI' })).toEqual(['aialm:stage:ready', 'aialm:role:ai']);
+    expect(statusLabel('role', 'AI')).toBe('aialm:role:ai');
+    // AI must not persist alongside an active agent
+    expect(isConsistent({ stage: 'AWAITING_AGENT_PICKUP', role: 'AI', agent: 'aialm-oss-po-analyze' })).toBe(false);
+    expect(isConsistent({ stage: 'IN_PROGRESS_BY_AGENT', role: 'AI', agent: 'aialm-oss-po-analyze' })).toBe(false);
+  });
+
   it('rejects unknown STAGE/ROLE/AGENT', () => {
     expect(isConsistent({ stage: 'BLOCKED', role: null, agent: 'none' } as never)).toBe(false);
     expect(isConsistent({ stage: 'IDLE', role: 'OPS', agent: 'none' } as never)).toBe(false);

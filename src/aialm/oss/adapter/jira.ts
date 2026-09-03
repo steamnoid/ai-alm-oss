@@ -142,6 +142,8 @@ export class JiraClient {
    * Utrzymuj labele statusowe w zgodzie z krotką: usuwamy wszystkie nasze
    * `aialm:*` labela, których nie ma w bieżącym żądanym zestawie, i dodajemy
    * te żądane. Idempotentne (nie zależy od poprzedniego stanu).
+   * Labele `aialm:debug:*` są per-ticket governance flagą DEBUG (default ON)
+   * i są ZAWSZE zachowywane — nigdy nie usuwane przez sync.
    */
   private async syncStateLabels(key: string, state: TicketState): Promise<void> {
     const wanted = new Set(stateLabels(state));
@@ -149,12 +151,27 @@ export class JiraClient {
       fields?: { labels?: string[] };
     };
     const currentLabels = current?.fields?.labels ?? [];
+    const isDebugLabel = (l: string) => l.startsWith('aialm:debug:');
+    const debugLabels = currentLabels.filter(isDebugLabel);
     const pristine = currentLabels.filter(l => !l.startsWith(IMMUTABLE_STATUS_LABEL_PREFIX));
     const keptOwned = currentLabels.filter(
-      l => l.startsWith(IMMUTABLE_STATUS_LABEL_PREFIX) && wanted.has(l),
+      l => l.startsWith(IMMUTABLE_STATUS_LABEL_PREFIX) && !isDebugLabel(l) && wanted.has(l),
     );
-    const next = [...wanted, ...keptOwned, ...pristine];
-    if (next.length !== currentLabels.length) {
+    // Dedupe debug + wanted + kept + pristine
+    const seen = new Set<string>();
+    const next: string[] = [];
+    for (const l of [...wanted, ...debugLabels, ...keptOwned, ...pristine]) {
+      if (!seen.has(l)) {
+        seen.add(l);
+        next.push(l);
+      }
+    }
+    const same =
+      next.length === currentLabels.length && next.every((v, i) => v === currentLabels[i]);
+    // Porównanie zbiorów (kolejność może się różnić) — użyj sort dla stabilności
+    const sameSet =
+      next.length === currentLabels.length && next.every(l => currentLabels.includes(l));
+    if (!sameSet) {
       await this.req('PUT', `/rest/api/3/issue/${encodeURIComponent(key)}`, {
         fields: { labels: next },
       });
@@ -217,37 +234,6 @@ export class JiraClient {
         reactions,
       };
     });
-  }
-
-  /** Distinct status names in a project's workflows (native kanban columns). */
-  async listStatuses(projectKey: string): Promise<string[]> {
-    const d = (await this.req(
-      'GET',
-      `/rest/api/3/project/${encodeURIComponent(projectKey)}/statuses`,
-    )) as Array<{ statuses?: Array<{ name?: string }> }>;
-    const names = new Set<string>();
-    for (const ty of d) for (const st of ty.statuses ?? []) if (st.name) names.add(st.name);
-    return [...names];
-  }
-
-  /**
-   * Transition an issue to a native status by NAME. Returns `{ found }` —
-   * `found:false` when no transition to that status name exists (caller
-   * surfaces the "missing column" zwrotka).
-   */
-  async transitionIssue(key: string, statusName: string): Promise<{ found: boolean }> {
-    const tr = (await this.req(
-      'GET',
-      `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`,
-    )) as { transitions?: Array<{ id: string; to?: { name?: string } }> };
-    const match = (tr.transitions ?? []).find(
-      t => t.to?.name && t.to.name.toLowerCase() === statusName.toLowerCase(),
-    );
-    if (!match) return { found: false };
-    await this.req('POST', `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
-      transition: { id: match.id },
-    });
-    return { found: true };
   }
 
   /** JQL search returning issue objects with `key` (and optional extra fields). */
@@ -447,6 +433,29 @@ export class JiraClient {
       `/rest/api/3/screens/${encodeURIComponent(screenId)}/tabs/${encodeURIComponent(tabId)}/fields`,
       { fieldId },
     );
+  }
+
+  /** Native workflow — list available transitions for an issue. */
+  async getTransitions(key: string): Promise<Array<{ id: string; name: string; to?: { id?: string; name?: string } }>> {
+    const d = (await this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`)) as {
+      transitions?: Array<{ id: string; name: string; to?: { id?: string; name?: string } }>;
+    };
+    return (d.transitions ?? []).map(t => {
+      const to = t.to
+        ? ({ ...(t.to.id !== undefined ? { id: String(t.to.id) } : {}), ...(t.to.name !== undefined ? { name: t.to.name } : {}) } as {
+            id?: string;
+            name?: string;
+          })
+        : undefined;
+      return { id: String(t.id), name: t.name, ...(to !== undefined ? { to } : {}) };
+    });
+  }
+
+  /** Native workflow — perform a transition by id. */
+  async transitionIssue(key: string, transitionId: string): Promise<void> {
+    await this.req('POST', `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
+      transition: { id: transitionId },
+    });
   }
 
   /** List all screens (paginated). */

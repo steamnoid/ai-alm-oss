@@ -5,7 +5,6 @@ import {
   candidateApproved,
   inferGate,
   isInBacklog,
-  runOnce,
 } from '../../src/aialm/oss/orchestrate/index.js';
 import type { SelfAwareCids } from '../../src/aialm/oss/adapter/fields-config.js';
 import type { CommentLike, Reaction } from '../../src/aialm/oss/shared/approval.js';
@@ -63,12 +62,13 @@ const commentLike = (body: string | null, isAi: boolean, reactions: Reaction[] =
 });
 
 describe('orchestrate — pure helpers', () => {
-  it('inferGate: READY/AWAITING_HUMAN_APPROVAL + PO + agent none (custom fields, not labels)', () => {
-    expect(inferGate({ stage: 'READY', role: 'PO', agent: 'none' })).toBe(true);
-    expect(inferGate({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'PO', agent: 'none' })).toBe(true);
+  it('inferGate: READY/AWAITING_HUMAN_APPROVAL + AI + agent none (custom fields, not labels)', () => {
+    expect(inferGate({ stage: 'READY', role: 'AI', agent: 'none' })).toBe(true);
+    expect(inferGate({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'AI', agent: 'none' })).toBe(true);
+    expect(inferGate({ stage: 'READY', role: 'PO', agent: 'none' })).toBe(false);
     expect(inferGate({ stage: 'READY', role: 'QA', agent: 'none' })).toBe(false);
     expect(inferGate({ stage: 'READY', role: null, agent: 'none' })).toBe(false);
-    expect(inferGate({ stage: 'AWAITING_AGENT_PICKUP', role: 'PO', agent: 'aialm-oss-po-analyze' })).toBe(false);
+    expect(inferGate({ stage: 'AWAITING_AGENT_PICKUP', role: 'AI', agent: 'aialm-oss-po-analyze' })).toBe(false);
     expect(inferGate({ stage: 'IDLE', role: null, agent: 'none' })).toBe(false);
   });
 
@@ -90,135 +90,88 @@ describe('orchestrate — pure helpers', () => {
 });
 
 describe('orchestrate — advanceOne', () => {
-  it('PICKUP_OK: READY + PO w Backlogu + ✅ → pickup, drop candidate, native transition', async () => {
+  it('PICKUP_OK: READY + AI w Backlogu + ✅ → pickup, drop candidate + native AWAITS AGENT PICKUP (atomowo)', async () => {
     const jira = makeJira([
       ...selfAwareHandlers(),
-      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'PO' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' }, labels: ['candidate'] } }) },
+      // transitions must come BEFORE generic /issue/C-1 (endsWith matching)
+      { url: '/transitions', fn: (u, init) => (init?.method === 'POST' ? json({}) : json({ transitions: [{ id: '2', name: 'AWAITS AGENT PICKUP', to: { id: '10214', name: 'AWAITS AGENT PICKUP' } }] })) },
+      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'AI' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' }, labels: ['candidate', 'aialm:stage:ready'] } }) },
       { url: '/comment', fn: () => json({ comments: [{ id: '1', author: { accountId: 'human-1' }, body: 'Looks good', reactions: [{ emoji: '👍', author: { accountId: 'human-1' } }] }] }) },
-      { url: '/statuses', fn: () => json([{ statuses: [{ name: 'AWAITS AGENT PICKUP' }] }]) },
-      { url: '/transitions', fn: () => json({ transitions: [{ id: '11', to: { name: 'AWAITS AGENT PICKUP' } }] }) },
     ]);
-    const row = await advanceOne(jira, 'C-1', { cids: CIDS, targetColumn: 'AWAITS AGENT PICKUP', statuses: ['AWAITS AGENT PICKUP'] });
+    const row = await advanceOne(jira, 'C-1', { cids: CIDS });
     expect(row.result).toBe('PICKUP_OK');
+    expect(row.status).toBe('AWAITS AGENT PICKUP');
+    expect(row.detail).toContain('AWAITS AGENT PICKUP');
+    expect(row.detail).toContain('Backlog →');
   });
 
   it('OUT_OF_SCOPE: READY ale nie w Backlogu', async () => {
     const jira = makeJira([
       ...selfAwareHandlers(),
-      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'PO' }, customfield_10092: { value: 'none' }, status: { name: 'Selected for dev' } } }) },
+      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'AI' }, customfield_10092: { value: 'none' }, status: { name: 'Selected for dev' } } }) },
     ]);
-    const row = await advanceOne(jira, 'C-1', { cids: CIDS, targetColumn: 'AWAITS AGENT PICKUP', statuses: [] });
+    const row = await advanceOne(jira, 'C-1', { cids: CIDS });
     expect(row.result).toBe('OUT_OF_SCOPE');
     expect(row.detail).toContain('Backlog');
     expect(row.status).toBe('Selected for dev');
-    expect(row.state).toBe('READY/PO/none');
-  });
-
-  it('MISSING_COLUMN: zwrotka gdy kolumna nie istnieje (po updateState + drop candidate)', async () => {
-    const jira = makeJira([
-      ...selfAwareHandlers(),
-      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'PO' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' }, labels: ['candidate'] } }) },
-      { url: '/comment', fn: () => json({ comments: [{ id: '1', author: { accountId: 'human-1' }, body: 'approve', reactions: [] }] }) },
-      { url: '/statuses', fn: () => json([{ statuses: [{ name: 'To Do' }] }]) },
-    ]);
-    const row = await advanceOne(jira, 'C-1', { cids: CIDS, targetColumn: 'AWAITS AGENT PICKUP', statuses: ['To Do'] });
-    expect(row.result).toBe('MISSING_COLUMN');
-    expect(row.detail).toContain('AWAITS AGENT PICKUP');
+    expect(row.state).toBe('READY/AI/none');
   });
 
   it('NO_APPROVAL: READY w Backlogu, ale brak ludzkiej akceptacji', async () => {
     const jira = makeJira([
       ...selfAwareHandlers(),
-      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'PO' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' } } }) },
+      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'AI' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' } } }) },
       { url: '/comment', fn: () => json({ comments: [{ id: '1', author: { accountId: 'ai-bot' }, body: '[AI-generated] Proposal — C-1 — aialm-oss-po-analyze:abc', reactions: [] }] }) },
-      { url: '/statuses', fn: () => json([{ statuses: [{ name: 'AWAITS AGENT PICKUP' }] }]) },
     ]);
-    const row = await advanceOne(jira, 'C-1', { cids: CIDS, targetColumn: 'AWAITS AGENT PICKUP', statuses: ['AWAITS AGENT PICKUP'] });
+    const row = await advanceOne(jira, 'C-1', { cids: CIDS });
     expect(row.result).toBe('NO_APPROVAL');
   });
 
   it('NOT_CANDIDATE: STAGE != READY/AWAITING_HUMAN_APPROVAL (np. IDLE)', async () => {
     const jira = makeJira([
       ...selfAwareHandlers(),
-      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'IDLE' }, customfield_10091: { value: 'PO' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' } } }) },
+      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'IDLE' }, customfield_10091: { value: 'AI' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' } } }) },
     ]);
-    const row = await advanceOne(jira, 'C-1', { cids: CIDS, targetColumn: 'AWAITS AGENT PICKUP', statuses: [] });
+    const row = await advanceOne(jira, 'C-1', { cids: CIDS });
     expect(row.result).toBe('NOT_CANDIDATE');
     expect(row.status).toBe('Backlog');
-    expect(row.state).toBe('IDLE/PO/none');
+    expect(row.state).toBe('IDLE/AI/none');
   });
 
-  it('NOT_CANDIDATE: role != PO', async () => {
+  it('NOT_CANDIDATE: role != AI (PO/QA nie przechodzi bramki)', async () => {
     const jira = makeJira([
       ...selfAwareHandlers(),
-      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'QA' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' } } }) },
+      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'PO' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' } } }) },
     ]);
-    const row = await advanceOne(jira, 'C-1', { cids: CIDS, targetColumn: 'AWAITS AGENT PICKUP', statuses: [] });
+    const row = await advanceOne(jira, 'C-1', { cids: CIDS });
     expect(row.result).toBe('NOT_CANDIDATE');
   });
 
   it('zwrotka zawiera native status i zwartą krotkę state dla wszystkich wyników', async () => {
     const jira = makeJira([
       ...selfAwareHandlers(),
-      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'PO' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' } } }) },
+      { url: '/transitions', fn: (u, init) => (init?.method === 'POST' ? json({}) : json({ transitions: [{ id: '2', name: 'AWAITS AGENT PICKUP', to: { id: '10214', name: 'AWAITS AGENT PICKUP' } }] })) },
+      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'AI' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' } } }) },
       { url: '/comment', fn: () => json({ comments: [{ id: '1', author: { accountId: 'human-1' }, body: 'approve', reactions: [] }] }) },
-      { url: '/statuses', fn: () => json([{ statuses: [{ name: 'AWAITS AGENT PICKUP' }] }]) },
-      { url: '/transitions', fn: () => json({ transitions: [{ id: '11', to: { name: 'AWAITS AGENT PICKUP' } }] }) },
     ]);
-    const row = await advanceOne(jira, 'C-1', { cids: CIDS, targetColumn: 'AWAITS AGENT PICKUP', statuses: ['AWAITS AGENT PICKUP'] });
+    const row = await advanceOne(jira, 'C-1', { cids: CIDS });
     expect(row.result).toBe('PICKUP_OK');
-    expect(row.status).toBe('Backlog');
-    expect(row.state).toBe('READY/PO/none');
+    expect(row.status).toBe('AWAITS AGENT PICKUP');
+    expect(row.state).toBe('READY/AI/none');
     expect(row.detail).toContain('pickup');
+    expect(row.detail).toContain('AWAITS AGENT PICKUP');
+  });
+
+  it('ERROR: brak natywnego transition → rollback krotki', async () => {
+    const jira = makeJira([
+      ...selfAwareHandlers(),
+      { url: '/transitions', fn: () => json({ transitions: [{ id: '99', name: 'Done', to: { id: '10009', name: 'Done' } }] }) },
+      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'AI' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' } } }) },
+      { url: '/comment', fn: () => json({ comments: [{ id: '1', author: { accountId: 'human-1' }, body: 'approve', reactions: [] }] }) },
+    ]);
+    const row = await advanceOne(jira, 'C-1', { cids: CIDS });
+    expect(row.result).toBe('ERROR');
+    expect(row.detail).toContain('brak natywnego transition');
   });
 });
 
-describe('orchestrate — runOnce', () => {
-  it('scans each provided project and finds pending candidates', async () => {
-    const calls: string[] = [];
-    const jira = makeJira([
-      ...selfAwareHandlers(),
-      { url: '/search/jql', fn: () => { calls.push('search'); return json({ issues: [] }); } },
-      { url: '/statuses', fn: () => json([{ statuses: [] }]) },
-    ]);
-    const reports = await runOnce(jira, ['C'], {});
-    expect(reports).toHaveLength(1);
-    expect(reports[0]!.projectKey).toBe('C');
-    expect(reports[0]!.rows).toEqual([]);
-    expect(calls).toContain('search');
-  });
-
-  it('zwrotka zawiera WSZYSTKIE tickety (kandydaci + nie-kandydaci) ze statusem i powodem', async () => {
-    const jira = makeJira([
-      ...selfAwareHandlers(),
-      { url: '/search/jql', fn: () => json({ issues: [{ key: 'C-1' }, { key: 'C-2' }] }) },
-      // C-1: gate OK, w Backlogu, brak approval → NO_APPROVAL
-      // C-2: IDLE/none — nie kandydat
-      { url: '/issue/C-1', fn: () => json({ fields: { customfield_10090: { value: 'READY' }, customfield_10091: { value: 'PO' }, customfield_10092: { value: 'none' }, status: { name: 'Backlog' } } }) },
-      { url: '/comment', fn: () => json({ comments: [{ id: '1', author: { accountId: 'ai-bot' }, body: '[AI-generated] Proposal — C-1', reactions: [] }] }) },
-      { url: '/issue/C-2', fn: () => json({ fields: { customfield_10090: { value: 'IDLE' }, customfield_10091: null, customfield_10092: { value: 'none' }, status: { name: 'In Progress' } } }) },
-      { url: '/statuses', fn: () => json([{ statuses: [{ name: 'AWAITS AGENT PICKUP' }] }]) },
-    ]);
-    const reports = await runOnce(jira, ['C'], {});
-    expect(reports[0]!.rows).toHaveLength(2);
-    const byKey = Object.fromEntries(reports[0]!.rows.map(r => [r.key, r]));
-    expect(byKey['C-1']!.result).toBe('NO_APPROVAL');
-    expect(byKey['C-1']!.status).toBe('Backlog');
-    expect(byKey['C-1']!.state).toBe('READY/PO/none');
-    expect(byKey['C-2']!.result).toBe('NOT_CANDIDATE');
-    expect(byKey['C-2']!.status).toBe('In Progress');
-  });
-
-  it('reports ERROR per-project when provisioning fails', async () => {
-    const jira = makeJira([
-      { url: '/field', fn: () => json(SELF_AWARE_FIELDS_RESPONSE) },
-      { url: '/tabs', fn: () => json([{ id: 'tab1', name: 'Field Tab' }]) },
-      { url: '/screens', fn: () => json({ values: [], isLast: true }) },
-      { url: '/context', fn: () => json({ values: [{ id: 'ctx1', isGlobalContext: true }] }) },
-      { url: '/option', fn: () => json({ values: [] }) },
-      { url: '/myself', fn: () => json({ accountId: 'ai-bot', emailAddress: 'aialmoss@icloud.com' }) },
-    ]);
-    const reports = await runOnce(jira, ['C'], {});
-    expect(reports[0]!.rows[0]!.result).toBe('ERROR');
-  });
-});

@@ -11,7 +11,7 @@ Status ticketa = konglomerat (krotka) niezależnych wymiarów. Każdy wymiar to 
 | Pole | Wartości |
 |---|---|
 | `STAGE` | `IDLE`, `AWAITING_HUMAN_APPROVAL`, `IN_PROGRESS_BY_AGENT`, `AWAITING_AGENT_PICKUP`, `READY`, `DONE` |
-| `ROLE` | `PO`, `DEV`, `QA`, `SEC`, `ARCH` |
+| `ROLE` | `PO`, `DEV`, `QA`, `SEC`, `ARCH`, `AI` |
 | `AGENT` | `none` + nazwy skilli `aialm-oss-*` (np. `aialm-oss-po-analyze`, `aialm-oss-qa-analyze`, `aialm-oss-dev-impl`) |
 
 ### Semantyka `STAGE`
@@ -25,8 +25,9 @@ Status ticketa = konglomerat (krotka) niezależnych wymiarów. Każdy wymiar to 
 ### Invarianty spójności (deterministyczne)
 - `AGENT=none` ⇔ `STAGE ∈ {IDLE, AWAITING_HUMAN_APPROVAL, DONE, READY}`
 - `AGENT≠none` ⇔ `STAGE ∈ {AWAITING_AGENT_PICKUP, IN_PROGRESS_BY_AGENT}`
-- `ROLE` definiuje "którego człowieka" tylko przy `AWAITING_HUMAN_APPROVAL`
+- `ROLE` definiuje "którego człowieka" tylko przy `AWAITING_HUMAN_APPROVAL`; `AI` = self-aware rola AI — człowiek ustawia `AI` w `AIALM ROLE` by oddać pracę orchestratorowi (handoff)
 - `DONE` → `AGENT=none`, `ROLE` opuszcza (brak aktywnego opiekuna)
+- `AI` — rola transient: występuje tylko jako `ROLE=AI` przy `AGENT=none` (READY/AWAITING_HUMAN_APPROVAL) jako marker oddania do AI; po `AWAITING_AGENT_PICKUP` wraca do `null`
 
 ### Transition table (tylko te przejścia są legalne)
 | Od | Do | Kto wyzwala |
@@ -72,9 +73,9 @@ onboard → discover → po → qa → arch → sec → imp
 ```
 Kandydaci/PR żyją w projekcie **klienckim** Jira + w GitHub repo — nigdy w AAO.
 
-### Pickup (człowiek stawia tylko STAGE)
-- Człowiek ustawia **wyłącznie** `STAGE=AWAITING_AGENT_PICKUP`.
-- `ROLE` + `AGENT` wypełnia **konwencja** (system/agent postępuje wg tablicy poniżej) — inaczej krotka łamie invariant `AGENT≠none ⇔ {AWAITING_AGENT_PICKUP, IN_PROGRESS_BY_AGENT}`.
+### Pickup (człowiek stawia ROLE=AI + STAGE)
+- Człowiek oddaje pracę orchestratorowi ustawiając `AIALM ROLE=AI` (przy `STAGE∈{READY,AWAITING_HUMAN_APPROVAL}`, `AGENT=none`) — orchestrator advance ustawia `AWAITING_AGENT_PICKUP` + `ROLE=null` + `AGENT` wg konwencji.
+- `ROLE` + `AGENT` przy `AWAITING_AGENT_PICKUP` wypełnia **konwencja** (system/agent postępuje wg tablicy poniżej) — inaczej krotka łamie invariant `AGENT≠none ⇔ {AWAITING_AGENT_PICKUP, IN_PROGRESS_BY_AGENT}`.
 
 | Po bramce | AGENT (konwencja) |
 |---|---|
@@ -91,3 +92,15 @@ Kandydaci/PR żyją w projekcie **klienckim** Jira + w GitHub repo — nigdy w A
 
 - Discover persist: utworzony kandydat dostaje `STAGE=AWAITING_HUMAN_APPROVAL` / `ROLE=PO` / `AGENT=none` + native Jira `To Do`.
 - **qa-impl i dev-impl NIE biegną równolegle.** Kolejność: `dev-impl` przed `qa-impl`. Zakaz cross-read zostaje (żadne z nich nie czytają outputu drugiego jako źródła wymagań).
+
+## Orchestrator `aialm-oss-orchestrate` — advance one step (agentowy klej)
+
+- **Backend:** Jira Cloud. Custom fields `AIALM STAGE/ROLE/AGENT` są źródłem prawdy; `STAGE` wyznacza etap, `ROLE`+`AGENT` są wyprowadzane wg konwencji poniżej. Orchestrator atomowo syncuje krotkę **i** natywny status/kanban wg mapy `STAGE→status` (`Backlog`/`AWAITS AGENT PICKUP`/`AGENT WORKING`/`AWAITS HUMAN APPROVAL`/`Done` — name-based, `STAGE_NATIVE_STATUS` w `orchestrate/index.ts`).
+- **Trigger:** skill agentowy, komenda **argumentowa** `/aialm-oss-orchestrate <WELLBEINGT-N>`. Człowiek wywołuje explicite dla jednego ticketa (po uprzednim `ROLE=AI` jako handoff).
+- **Bramka discover (jedyna zaimplementowana):** `STAGE∈{READY,AWAITING_HUMAN_APPROVAL}` + `ROLE=AI` + `AGENT=none` + `Backlog` + ludzkie `✅` → `AWAITING_AGENT_PICKUP/null/aialm-oss-po-analyze` + native `AWAITS AGENT PICKUP` (replace `PO` → `AI`; `AI` transient; atomowo krotka + kolumna). Inny `ROLE` → `NOT_CANDIDATE`.
+- **Zakres (na start):** wąski wycinek po/qa/dev→e2e (nie cały workflow arch/sec/pr na start). Rozszerzenie wg tablicy pickup.
+- **Semantyka „jeden krok" (Wariant I — exclusive mutator):** orchestrator zna całą maszynę stanów i konwencję pickup, ale **nie duplikuje pracy skilli**. Jeden wywołany krok = **jedno legalne przesunięcie kolumny** (jedno przejście `STAGE` z transition table). Orchestrator wybiera następny skill wg konwencji, ustawia krotkę `AWAITING_AGENT_PICKUP` (`ROLE`+`AGENT` wg tablicy) i **oddaje pałeczkę** — to wybrany skill mutuje treść (AC/QA/Contract/impl). Jeśli przesunięcie **nie jest możliwe** — orchestrator **nie mutuje**; zostawia **komentarz na tickecie** wyjaśniający powód (brak aprobaty `✅`/`APPROVE:<id>`, nielegalne przejście, `AGENT≠none` już aktywny, brak requisitu — nigdy `BLOCKED` jako stan, tylko brak akcji + komentarz).
+- **Exclusive mutator:** przy `IN_PROGRESS_BY_AGENT` tylko wskazany `AGENT` może pisać; orchestrator sprawdza invariant przed mutacją (konflikt → komentarz, bez zmian).
+- **Governance flaga DEBUG (per-ticket, default ON):** każdy ticke ma label `aialm:debug:on` / `aialm:debug:off` (brak obu = `on`). Gdy `on`, **każda** czynność orchestratora (wszystkie wyniki) jest logowana jako komentarz `[AI-generated] Orchestrate — <KEY> — DEBUG: <result> — <detail>` na tickecie. Gdy `off`, DEBUG pomijane — tylko legacy `BLOCKED:` dla nie-zaawansowanych. Labele `aialm:debug:*` zachowywane przez `syncStateLabels` (helper `isDebugOn` w `shared/state.ts`).
+- **Raport:** `APPLIED` (przesunięto), `BLOCKED` (komentarz, bez zmian), `SKIPPED` (nic do zrobienia) — plus stan po kroku.
+- **Idempotencja:** re-run przy już-przesuniętym pickupie → `SKIPPED` (bez podwójnej mutacji).

@@ -13,6 +13,7 @@ export interface GovernanceRoles {
   dev?: string;
   sec?: string;
   arch?: string;
+  ai?: string;
 }
 
 export interface GovernanceFlags {
@@ -23,7 +24,7 @@ export interface GovernanceFlags {
 export const GOVERNANCE_LABEL = 'governance';
 export const GOVERNANCE_TITLE = 'Project Governance';
 
-const CORE_ROLES = ['po', 'qa', 'dev'] as const;
+const CORE_ROLES = ['po', 'qa', 'dev', 'ai'] as const;
 const OPTIONAL_ROLES = ['sec', 'arch'] as const;
 type GovernanceRole = (typeof CORE_ROLES)[number] | (typeof OPTIONAL_ROLES)[number];
 
@@ -37,7 +38,7 @@ interface Found {
 export function parseGovernance(text: string): { roles: GovernanceRoles; flags: GovernanceFlags } {
   const roles: GovernanceRoles = {};
   const body = text.split(/\n*## Flags/)[0] ?? '';
-  for (const m of body.matchAll(/^\s*(po|qa|dev|sec|arch):\s*(\S+)\s*$/gm)) {
+  for (const m of body.matchAll(/^\s*(po|qa|dev|sec|arch|ai):\s*(\S+)\s*$/gm)) {
     roles[m[1] as GovernanceRole] = m[2]!;
   }
   const flags: GovernanceFlags = { sec: true, arch: true };
@@ -86,6 +87,7 @@ export async function ensureGovernanceTicket(
     po: input.leadAccountId,
     qa: input.leadAccountId,
     dev: input.leadAccountId,
+    ai: input.leadAccountId,
   };
   const flags: GovernanceFlags = { sec: true, arch: true };
   const taskTypeId = await jira.issueTypeId(input.projectKey, 'Task');
