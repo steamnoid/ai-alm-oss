@@ -38,14 +38,49 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
 /aialm-oss-qa-impl AIALMOSS-N
 ```
 
-## Input
+## Input — source of truth (description OR approved comments)
 
+GENERATED QA and Implementation Contract are canonical when batched into the target
+description (`## GENERATED QA` / `## Implementation Contract`). **But approved
+proposal comments are an equally valid source of truth** — the skills also read from
+comments, so a missing description section does **not** mean the input is absent.
+
+Resolve the effective spec for each target in this order:
+
+0. **Recognizing human approval (comments as source of truth).** A proposal is
+   human-approved if **any** of these holds — do not require the `## GENERATED`
+   description section:
+   - a human `✅`/`👍` reaction on the proposal comment, or
+   - a human comment containing `APPROVE:<id>` / `LGTM <id>` (even as a separate
+     comment), or
+   - a standalone human comment whose body is just `✅` / `👍` appearing **after**
+     the proposal in the thread (the human clicked-✅ as a follow-up comment —
+     this is approval, not a proposal). A `✅`/`👍` appears as its own comment
+     body when the UI posts it as a reply rather than a reaction.
+   An unapproved proposal is skipped; a `✅`/`👍` that appears *before* the
+   proposal does not count for it.
+
+1. **GENERATED QA**:
+   - Prefer the `## GENERATED QA` block in the target description if present.
+   - Else derive from **approved `QA Scenario Proposal` comments** on that target:
+     header stamp `aialm-oss-qa-analyze:<id>` + footer `proposal:<id>` + human
+     approval (`hasHumanApprovalFor`: `✅`/`👍` or `APPROVE:<id>`/LGTM). Each
+     approved proposal's `Scenario: ... Given/When/Then ...` + `kind` + `objective`
+     is a valid behavioral scenario. Skip unapproved deltas.
+   - Only BLOCKED for a target if **neither** a `## GENERATED QA` section **nor** at
+     least one approved QA Scenario Proposal comment is present.
+
+2. **Implementation Contract**:
+   - Prefer the `## Implementation Contract` block in the target description if
+     present.
+   - Else derive from **approved `Implementation Contract Proposal` comments** on
+     that target: header stamp `aialm-oss-dev-analyst:<id>` + footer
+     `proposal:<id>` + human approval. Approved `kind: LOCATOR`/`kind: UI-STATE`/
+     `kind: DATA` hooks are the frozen technical hooks for test binding.
+   - Only BLOCKED for UI-automation-required targets if **neither** a contract
+     section **nor** an approved Implementation Contract Proposal comment is present.
 - Resolve target: parent with exclusive functional children → each
   independently; or a single child id.
-- Require non-empty GENERATED QA; else BLOCKED for that target.
-- UI automation required → require a non-empty Implementation Contract with
-  approved hooks; missing → BLOCKED (run dev-analyst then
-  dev-update-approved first) rather than inventing hooks.
 - Test framework/runner/layout from Project AI Profile testing conventions.
 - MUST NOT read same-wave `aialm-oss-dev-impl` diffs as hook source (pre-existing
   main codebase is fine).

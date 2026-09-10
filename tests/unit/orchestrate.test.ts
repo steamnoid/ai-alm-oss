@@ -192,6 +192,15 @@ describe('orchestrate — nextAgentAfterApproval (pickup routing)', () => {
       ['aialm-oss-verify', 'aialm-oss-pr'],
     ];
     for (const [from, to] of chain) {
+      if (from === 'aialm-oss-verify') {
+        // verify → pr gate is isVerifyReadyForPr, not proposal
+        const comments = [
+          commentLike('[AI-generated] Summary — C-1 — aialm-oss-verify\nVerdict: READY_FOR_PR', true),
+          commentLike('✅', false),
+        ];
+        expect(nextAgentAfterApproval({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'AI', agent: 'none' }, comments)).toBe(to);
+        continue;
+      }
       const id = 'abc1234';
       const comments = [
         commentLike(`[AI-generated] Proposal — C-1 — ${from}:${id}`, true),
@@ -199,6 +208,65 @@ describe('orchestrate — nextAgentAfterApproval (pickup routing)', () => {
       ];
       expect(nextAgentAfterApproval({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'AI', agent: 'none' }, comments)).toBe(to);
     }
+  });
+
+  it('done dev-impl (IMPLEMENTED) routes to qa-impl even with only ROLE=AI handoff (no separate human gate)', () => {
+    const comments = [
+      // dev-analyst contract approved → dev-impl
+      commentLike('[AI-generated] Proposal — W13 — aialm-oss-dev-analyst:8c247177fc7c', true),
+      commentLike('APPROVE:8c247177fc7c', false),
+      // dev-impl execution summary with done marker (aggregated from child)
+      commentLike('[AI-generated] Summary — W13 — aialm-oss-dev-impl\nResult: IMPLEMENTED', true),
+    ];
+    // ROLE=AI handoff on parent → should advance to qa-impl (dev-impl done), NOT stay/loop.
+    expect(nextAgentAfterApproval({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'AI', agent: 'none' }, comments)).toBe(
+      'aialm-oss-qa-impl',
+    );
+  });
+
+  it('verifyFailed does NOT override to qa-analyze when dev-impl is already done (IMPLEMENTED)', () => {
+    const comments = [
+      commentLike('[AI-generated] Proposal — W13 — aialm-oss-dev-analyst:8c247177fc7c', true),
+      commentLike('APPROVE:8c247177fc7c', false),
+      commentLike('[AI-generated] Summary — W13 — aialm-oss-dev-impl\nResult: IMPLEMENTED', true),
+      // older verify NOT ready still on ticket
+      commentLike('[AI-generated] Summary — W5 — aialm-oss-verify\nVerdict: NOT READY_FOR_PR', true),
+    ];
+    // dev-impl is done → pickup table yields qa-impl, verifyFailed loop is suppressed.
+    expect(nextAgentAfterApproval({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'AI', agent: 'none' }, comments)).toBe(
+      'aialm-oss-qa-impl',
+    );
+  });
+
+  it('approved qa-impl (IMPLEMENTED) on child + standalone ✅ advances parent to verify (comments as source of truth)', () => {
+    const comments = [
+      // dev-analyst contract approved on child
+      commentLike('[AI-generated] Proposal — W13 — aialm-oss-dev-analyst:8c247177fc7c', true),
+      commentLike('APPROVE:8c247177fc7c', false),
+      commentLike('[AI-generated] Summary — W13 — aialm-oss-dev-impl\nResult: IMPLEMENTED', true),
+      commentLike('✅', false),
+      // qa-impl execution summary with done marker (aggregated from child)
+      commentLike('[AI-generated] Summary — W13 — aialm-oss-qa-impl\nIMPLEMENTED', true),
+    ];
+    // qa-impl done without a READY_FOR_PR verify verdict → verify (not pr).
+    expect(nextAgentAfterApproval({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'AI', agent: 'none' }, comments)).toBe(
+      'aialm-oss-verify',
+    );
+  });
+
+  it('qa-impl IMPLEMENTED_WITH_FAILURES (tests materialized, validation deferred) advances to verify', () => {
+    const comments = [
+      commentLike('[AI-generated] Proposal — W13 — aialm-oss-dev-analyst:8c247177fc7c', true),
+      commentLike('APPROVE:8c247177fc7c', false),
+      commentLike('[AI-generated] Summary — W13 — aialm-oss-dev-impl\nResult: IMPLEMENTED', true),
+      commentLike('✅', false),
+      // qa-impl materialized tests but deferred execution (no Chromium in sandbox)
+      commentLike('[AI-generated] Summary — W13 — aialm-oss-qa-impl\nIMPLEMENTED_WITH_FAILURES', true),
+    ];
+    // *_WITH_FAILURES liczy się jako done-for-routing → verify (walidator wykona testy).
+    expect(nextAgentAfterApproval({ stage: 'AWAITING_HUMAN_APPROVAL', role: 'AI', agent: 'none' }, comments)).toBe(
+      'aialm-oss-verify',
+    );
   });
 
   it('lastMatch: po-analyze + po-prep-decompose + po-decompose all approved → qa-analyze (furthest wins)', () => {

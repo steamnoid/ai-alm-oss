@@ -47,7 +47,7 @@ describe('identity & markers', () => {
 
 describe('human approval', () => {
   const aiC = (body: string, reactions: Array<{ emoji: string; isAi: boolean }> = []) => ({
-    body,
+    body: `[AI-generated] ${body}`,
     isAi: true,
     reactions,
   });
@@ -82,6 +82,42 @@ describe('human approval', () => {
 
   it('no approval leaves false', () => {
     expect(hasHumanApprovalFor([], 'abc1234')).toBe(false);
+  });
+
+  it('standalone ✅ comment AFTER the proposal approves (comments as source of truth)', () => {
+    expect(
+      hasHumanApprovalFor(
+        [aiC('proposal:abc1234 plan'), humanC('✅')],
+        'abc1234',
+      ),
+    ).toBe(true);
+  });
+
+  it('standalone 👍 comment after the proposal approves', () => {
+    expect(
+      hasHumanApprovalFor(
+        [aiC('QA Scenario Proposal proposal:abc1234'), humanC('👍')],
+        'abc1234',
+      ),
+    ).toBe(true);
+  });
+
+  it('non-gating body emoji after proposal does NOT approve', () => {
+    expect(
+      hasHumanApprovalFor(
+        [aiC('proposal:abc1234 plan'), humanC('🎉')],
+        'abc1234',
+      ),
+    ).toBe(false);
+  });
+
+  it('emoji comment BEFORE the proposal does NOT approve it', () => {
+    expect(
+      hasHumanApprovalFor(
+        [humanC('✅'), aiC('proposal:abc1234 plan')],
+        'abc1234',
+      ),
+    ).toBe(false);
   });
 });
 

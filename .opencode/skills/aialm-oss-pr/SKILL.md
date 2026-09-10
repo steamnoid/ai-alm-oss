@@ -40,6 +40,12 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
 
 ## Flow
 
+0. **Read the work item with ALL comments.** When calling `jira_jira_get_issue`
+   to read the parent (and each child), always use `comment_limit:200` (or
+   higher) and `fields=*all` + `use_display_names=true`. The verify READY_FOR_PR
+   verdict, human approvals, and execution summaries live in the **latest**
+   comments — the default `comment_limit:50` is too low for work items with 100+
+   comments and will miss critical evidence.
 1. Check the verify verdict == READY_FOR_PR; else BLOCKED.
 2. HUMAN APPROVAL GATE: open PR? (✅ / `APPROVE:<id>`) — no approval, no PR.
 3. Prepare the branch + commits per Profile conventions (commit message style,

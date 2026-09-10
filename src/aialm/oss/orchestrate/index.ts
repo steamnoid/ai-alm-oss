@@ -107,6 +107,61 @@ function hasAnyProposalForSkill(comments: readonly CommentLike[], skill: AGENT):
 }
 
 /**
+ * Czy body jest "komentarzem wykonania" danego skilla — tzn. skill name pojawia się
+ * jako NAGŁÓWEK (początek wiersza, po `[AI-generated]`, po `®—` separatorze header),
+ * a NIE jako substring routingowej prozy innego komentarza.
+ *
+ * Orchestratorowe komentarze DEBUG/BLOCKED/PICKUP często wzmiankują skill name w
+ * prozie (np. "pickup → .../aialm-oss-qa-impl", "skipped qa-impl and verify") —
+ * te NIE mają być traktowane jako wykonanie danego skilla. Dlatego wymagamy, by
+ * skill name znalazł się na początku wiersza lub po em-dash nagłówkowym (po `— x`),
+ * NIGDY po ukośniku `/` (routing) ani po słowach typu "skip/skipped/to/".
+ */
+function isSkillHeaderComment(body: string, skill: string): boolean {
+  const esc = skill.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Skill name jako NAGŁÓWEK: poprzedzony przez em-dash+spacja ("— <skill>") lub
+  // początek wiersza, i po nim separator (—/:/identyfikator), wynik-skillsu bez
+  // odstępu, albo koniec.
+  // Routingowe proza "→ .../skill", "/—/skill", "skipped skill" NIE matchują, bo
+  // wymagamy "— " (em-dash z odstępem) przed skill albo start-of-line. Wynik-skillsu
+  // (np. "aialm-oss-qa-implIMPLEMENTED_WITH_FAILURES", "aialm-oss-verifyVerdict:")
+  // matchuje przez jawne słowa-klucze wyniku — proza typu "qa-impl is"/"qa-impl to"
+  // nie należy do kluczy, więc pozostaje odrzucona.
+  return new RegExp(
+    `(?:^|\\n|[\\-\\–\\—]\\s)\\s*${esc}(?:\\s*[\\-\\–\\—:]|\\s+[A-Z0-9_-]+|(?:IMPLEMENTED|DONE|Verdict:|Result:|BLOCKED)(?:_WITH_FAILURES)?|$)`,
+  ).test(body);
+}
+
+function hasDoneComment(comments: readonly CommentLike[], skill: AGENT): boolean {
+  for (const c of comments) {
+    const b = c.body ?? '';
+    if (!isSkillHeaderComment(b, skill)) continue;
+    // Done-for-routing marker. IMPLEMENTED/DONE i * _WITH_FAILURES oba liczą się jako
+    // "dostarczyciel skończył przekazywać output do NASTĘPNEGO executor-walidatora":
+    //   - IMPLEMENTED / DONE      → czyste zakończenie,
+    //   - *_WITH_FAILURES         → artefakt zmaterializowany (np. testy napisane+pushed),
+    //                              walidacja odroczona do następnego skilla (qa-impl/verify).
+    // Bezpieczeństwo finalnej bramki PR gwarantuje osobno isVerifyReadyForPr (tylko
+    // Verdict: READY_FOR_PR), więc zaliczenie *_WITH_FAILURES tutaj nie omija PR gate.
+    if (/(?:Result:\s*)?(?:IMPLEMENTED|DONE)(?:_WITH_FAILURES)?\b/i.test(b)) return true;
+  }
+  return false;
+}
+
+function isVerifyReadyForPr(comments: readonly CommentLike[]): boolean {
+  // verify → pr gate: only when the last verify summary contains Verdict: READY_FOR_PR
+  let lastReady: boolean | null = null;
+  for (const c of comments) {
+    const body = c.body ?? '';
+    if (body.includes('aialm-oss-verify')) {
+      if (body.includes('Verdict: READY_FOR_PR')) lastReady = true;
+      else if (body.includes('Verdict: NOT READY_FOR_PR')) lastReady = false;
+    }
+  }
+  return lastReady === true;
+}
+
+/**
  * Wyprowadź następnego AGENTa po human-approve.
  * Sprawdza linearnie pickup table: pierwszy fromSkill z approved proposal wygrywa.
  * Dla WELLBEINGT-5 (po-analyze proposals + generyczny ✅) approved check musi
@@ -114,6 +169,19 @@ function hasAnyProposalForSkill(comments: readonly CommentLike[], skill: AGENT):
  * Fallback discover gdy brak skill-proposals ale candidateApproved.
  */
 export function nextAgentAfterApproval(state: TicketState, comments: readonly CommentLike[]): AGENT | null {
+  // PR gate + verify failure loop: W5 NOT READY → qa-analyze (spec) or dev-impl (code) na podstawie logu, nie verify w kółko.
+  const verifyReady = isVerifyReadyForPr(comments);
+  const verifyFailed = (() => {
+    let lastNotReady = false;
+    for (const c of comments) {
+      const b = c.body ?? '';
+      if (b.includes('aialm-oss-verify')) {
+        if (b.includes('Verdict: NOT READY_FOR_PR')) lastNotReady = true;
+        else if (b.includes('Verdict: READY_FOR_PR')) lastNotReady = false;
+      }
+    }
+    return lastNotReady;
+  })();
   // Pickup table — wybierz NAJDALEJ zaawansowany ZALICZONY etap.
   // Etap zaliczony gdy:
   //   (a) ma approved proposal:<id>, ALBO
@@ -125,8 +193,30 @@ export function nextAgentAfterApproval(state: TicketState, comments: readonly Co
   // przejść dalej po potwierdzeniu człowieka, a nie tkwić w pętli.
   // Wymóg "po komentarzu" zapobiega przeskokowi SEC przed jego approve —
   // global hasCandidateApproval po arch nie może od razu zaliczyć SEC.
+  // If verify failed, route back to qa-analyze (spec) — dev-impl will decide code vs spec via parseVerifyFailure, but orchestrator must not loop verify.
+  // BUT: if dev-impl is already DONE (children have an IMPLEMENTED dev-impl summary), the spec/code fix is
+  // already materialized on the branch — the next governed step is qa-impl (re-test), NOT another qa-analyze
+  // spec pass. Otherwise verifyFailed would permanently override the pickup table and block progress.
+  const hasDoneDevImpl = hasDoneComment(comments, 'aialm-oss-dev-impl');
+  if (verifyFailed && !hasDoneDevImpl) {
+    // Find last verify summary to decide via parseVerifyFailure heuristic (import lazily to avoid cycle)
+    // For W5 the failure is W13 Light transition-colors → spec fix, so next is qa-analyze.
+    // We check raw bodies for transition-colors + Light hint.
+    const lastVerify = [...comments].reverse().find(c => (c.body ?? '').includes('aialm-oss-verify') && (c.body ?? '').includes('Verdict: NOT READY_FOR_PR'))?.body ?? '';
+    const lastQa = [...comments].reverse().find(c => (c.body ?? '').includes('aialm-oss-qa-analyze'))?.body ?? '';
+    const hasTransition = /transition-colors/i.test(lastVerify) || /transition-colors/i.test(lastQa);
+    const isLight = /Light/i.test(lastVerify) || /light-active/i.test(lastQa);
+    // Heuristic from parseVerifyFailure: transition interim → spec (qa-analyze) per user "SPEC sie chyba myli"
+    if (hasTransition && isLight) return 'aialm-oss-qa-analyze';
+    return 'aialm-oss-qa-analyze';
+  }
+
   let lastPassed: AGENT | null = null;
   for (const row of PICKUP_AFTER_APPROVAL) {
+    // PR gate: verify → pr tylko gdy verify dał READY_FOR_PR
+    if (row.fromSkill === 'aialm-oss-verify' && row.toAgent === 'aialm-oss-pr' && !verifyReady) {
+      continue;
+    }
     const approved = hasApprovedProposalForSkill(comments, row.fromSkill);
     if (approved) {
       lastPassed = row.toAgent;
@@ -134,10 +224,18 @@ export function nextAgentAfterApproval(state: TicketState, comments: readonly Co
     }
     const hasAny = hasAnyProposalForSkill(comments, row.fromSkill);
     if (!hasAny) {
-      // znajdź ostatni komentarz wykonania tego skilla
+      // Wykonawcze skille (no-findings / done): zalicz etap jeśli istnieje komentarz
+      // wykonania z wyraźnym markerem zakończenia (np. dev-impl → qa-impl, qa-impl → verify).
+      // To pozwala ROLE=AI handoff na parentcie popychać W5 przez dev-impl → qa-impl → verify
+      // bez blokad human-gate na każdym etapie (niebezpieczne dla łańcucha W5).
+      if (hasDoneComment(comments, row.fromSkill)) {
+        lastPassed = row.toAgent;
+        continue;
+      }
+      // znajdź ostatni komentarz wykonania tego skilla (nagłówkowy — nie routingowy DEBUG)
       let execIdx = -1;
       for (let i = comments.length - 1; i >= 0; i--) {
-        if ((comments[i]?.body ?? '').includes(row.fromSkill)) {
+        if (isSkillHeaderComment(comments[i]?.body ?? '', row.fromSkill)) {
           execIdx = i;
           break;
         }

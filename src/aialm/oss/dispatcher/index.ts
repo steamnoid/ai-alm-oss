@@ -9,6 +9,8 @@
  *
  * No Jira state mutation here. No daemon — one-shot command with optional --watch.
  */
+import { existsSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import type { JiraClient } from '../adapter/jira.js';
 import type { SelfAwareCids } from '../adapter/fields-config.js';
 import { SELF_AWARE_FIELDS } from '../adapter/fields.js';
@@ -198,8 +200,37 @@ export function buildDockerRunSpec(
   }
   // Pass Jira/auth env through the container. Prefer --env-file .env if present on host;
   // we still add --env-file arg when hostCwd is set (file is at <hostCwd>/.env).
+  // When running inside Docker (sibling pattern), use the container path /app/.env
+  // because Docker on macOS can't read host paths directly with --env-file.
   if (opts.hostCwd) {
-    args.push('--env-file', `${opts.hostCwd}/.env`);
+    const inDocker = existsSync('/.dockerenv') || existsSync('/run/.containerenv');
+    const envFilePath = inDocker ? '/app/.env' : `${opts.hostCwd}/.env`;
+    args.push('--env-file', envFilePath);
+  }
+
+  // DiD: mount host docker.sock so skills can run `docker build`/`docker run` E2E gates.
+  // Opt-in via DISPATCH_WITH_DOCKER_SOCK=1 (default off — increases attack surface).
+  // On macOS Docker Desktop/Colima the sock may be at ~/.docker/run/docker.sock.
+  if (process.env.DISPATCH_WITH_DOCKER_SOCK === '1') {
+    const candidates = ['/var/run/docker.sock', `${homedir()}/.docker/run/docker.sock`];
+    let mounted = false;
+    for (const p of candidates) {
+      if (p && existsSync(p)) {
+        args.push('-v', `${p}:${p}`);
+        mounted = true;
+      }
+    }
+    if (!mounted) args.push('-v', '/var/run/docker.sock:/var/run/docker.sock');
+    // docker.sock is owned by root:daemon (macOS) — node user cannot dial it without extra group.
+    // Run DiD containers as root so `docker info` succeeds; keep opencode auth mounts functional
+    // by duplicating them for /root as well (opencode looks at $HOME).
+    args.push('--user', 'root');
+    if (opts.hostOpencodeAuthPath) {
+      args.push('-v', `${opts.hostOpencodeAuthPath}:/root/.config/opencode/auth.json:ro`);
+    }
+    if (opts.hostOpencodeLocalAuthPath) {
+      args.push('-v', `${opts.hostOpencodeLocalAuthPath}:/root/.local/share/opencode/auth.json:ro`);
+    }
   }
 
   if (opts.extraArgs?.length) args.push(...opts.extraArgs);
@@ -221,7 +252,7 @@ export function correctedOpencodeConfig(jiraSite: string, opts: { jiraEmailEnv?:
   const tokenEnv = opts.jiraTokenEnv ?? 'JIRA_TOKEN';
   const cfg = {
     $schema: 'https://opencode.ai/config.json',
-    permission: { external_directory: { '~/Develop/*': 'allow' } },
+    permission: { external_directory: { '~/Develop/*': 'allow', '/tmp/*': 'allow', '/var/folders/*': 'allow' } },
     mcp: {
       jira: {
         type: 'local',

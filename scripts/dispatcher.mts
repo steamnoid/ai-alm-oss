@@ -86,26 +86,36 @@ async function main(): Promise<void> {
   const image = typeof args.image === 'string' ? String(args.image) : DISPATCH_IMAGE_DEFAULT;
   const limit = typeof args.limit === 'string' ? Number(args.limit) : 20;
   const tail = typeof args.tail === 'string' ? Number(args.tail) : 100;
-  const hostCwd = process.cwd();
+  const hostCwd = process.env.DISPATCH_HOST_CWD || process.cwd();
+  // Detect if running inside a Docker container (sibling dispatcher pattern).
+  // When running inside Docker, homedir() returns container paths (e.g. /root)
+  // which don't exist on the Docker host — skip host auth mounts.
+  const runningInDocker = existsSync('/.dockerenv') || existsSync('/run/.containerenv');
+  console.log(`[dispatcher] runningInDocker=${runningInDocker} homedir=${homedir()}`);
   // Mount host opencode auth only when explicitly requested (avoids stale jira token override).
-  const hostOpencodeDir = process.env.DISPATCH_MOUNT_OPENCODE ? join(homedir(), '.config', 'opencode') : undefined;
+  const hostOpencodeDir = process.env.DISPATCH_MOUNT_OPENCODE && !runningInDocker ? join(homedir(), '.config', 'opencode') : undefined;
   const opencodeDirExists = !!hostOpencodeDir && existsSync(hostOpencodeDir) && statSync(hostOpencodeDir).isDirectory();
   // Corrected opencode.json where `jira` MCP points to the dispatch target site (JIRA_SITE, e.g. ai-alm-oss)
   // so `jira_jira_*` is correct for WELLBEINGT. Without this, `jira` would be paligakrzychu and fail for ai-alm-oss.
   const jiraSite = process.env.JIRA_SITE?.trim() ?? 'https://ai-alm-oss.atlassian.net';
   const opencodeAuthPath = join(homedir(), '.config', 'opencode', 'auth.json');
-  const opencodeAuthExists = existsSync(opencodeAuthPath);
+  const opencodeAuthExists = !runningInDocker && existsSync(opencodeAuthPath);
   const opencodeLocalAuthPath = join(homedir(), '.local', 'share', 'opencode', 'auth.json');
-  const opencodeLocalAuthExists = existsSync(opencodeLocalAuthPath);
+  const opencodeLocalAuthExists = !runningInDocker && existsSync(opencodeLocalAuthPath);
   const dispatchModel = process.env.OPENCODE_MODEL ?? process.env.AIALM_MODEL ?? undefined;
   // Write corrected config to a temp file and mount as /app/opencode.json (single `jira` MCP, correct site).
-  const correctedConfigPath = join(tmpdir(), `aialm-dispatch-${project ?? 'unknown'}-${Date.now()}.json`);
+  // When running inside Docker, write to the mounted workspace so Docker can mount it.
+  const inDocker = existsSync('/.dockerenv') || existsSync('/run/.containerenv');
+  const containerBase = inDocker ? '/app' : tmpdir();
+  const hostBase = inDocker ? join(hostCwd, '.opencode-corrected') : tmpdir();
+  const configFile = `aialm-dispatch-${project ?? 'unknown'}-${Date.now()}.json`;
   let correctedConfigMounted: string | undefined;
   if (project) {
     try {
-      mkdirSync(tmpdir(), { recursive: true });
-      writeFileSync(correctedConfigPath, correctedOpencodeConfig(jiraSite), 'utf8');
-      correctedConfigMounted = correctedConfigPath;
+      mkdirSync(join(containerBase, '.opencode-corrected'), { recursive: true });
+      const containerPath = join(containerBase, '.opencode-corrected', configFile);
+      writeFileSync(containerPath, correctedOpencodeConfig(jiraSite), 'utf8');
+      correctedConfigMounted = join(hostBase, configFile);
     } catch {
       correctedConfigMounted = undefined;
     }
@@ -212,6 +222,17 @@ async function main(): Promise<void> {
 
   const jira = new JiraClient({ config: jiraConfig() });
   const cids = await ensureSelfAwareFields(jira, project);
+  // Auto-sync fork main → upstream main (W15 → d009c2c) so next wave (W5) doesn't branch from stale ee0d6cd.
+  // Best-effort, only for WELLBEINGT (hardcoded upstream steamnoid/wellbeing-tracker-public → fork paligakrzychu).
+  if (project === 'WELLBEINGT') {
+    try {
+      const { syncForkMain } = await import('../src/aialm/oss/shared/git-ops.js');
+      const r = await syncForkMain('steamnoid', 'wellbeing-tracker-public', 'paligakrzychu');
+      if (r.synced) console.log(`fork sync: paligakrzychu:main ${r.forkSha.slice(0, 7)} → ${r.upstreamSha.slice(0, 7)} (upstream steamnoid)`);
+    } catch (e) {
+      console.log(`fork sync skip: ${(e as Error).message.slice(0, 120)}`);
+    }
+  }
   const tickets = await scanPickupTickets(jira, project, cids, { limit });
   if (!tickets.length) {
     console.log(`no tickets in AWAITS AGENT PICKUP for ${project} (limit ${limit})`);

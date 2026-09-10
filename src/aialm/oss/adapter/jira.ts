@@ -206,34 +206,44 @@ export class JiraClient {
    * author matches the authenticated AI ALM OSS account OR the comment carries
    * the `[AI-generated]` marker (tolerant). Reactions map to `{emoji, isAi}`.
    */
-  async listComments(key: string): Promise<CommentLike[]> {
-    const d = (await this.req(
-      'GET',
-      `/rest/api/3/issue/${encodeURIComponent(key)}/comment`,
-    )) as {
-      comments?: Array<{
-        id: string;
-        author?: { accountId?: string } | null;
-        body?: unknown;
-        reactions?: Array<{ emoji?: string; author?: { accountId?: string } | null }>;
-      }>;
-    };
+  async listComments(key: string, maxResults = 5000): Promise<CommentLike[]> {
     const me = await this.myself();
     const aiAccountId = me.accountId;
-    return (d.comments ?? []).map(c => {
-      const bodyText = adfToPlainText(c.body);
-      const reactions: Reaction[] = [];
-      for (const r of c.reactions ?? []) {
-        const emoji = r.emoji ?? '';
-        if (!emoji) continue;
-        reactions.push({ emoji, isAi: c.author?.accountId === aiAccountId });
-      }
-      return {
-        body: bodyText,
-        isAi: c.author?.accountId === aiAccountId || isAiMarked(bodyText),
-        reactions,
+    const all: CommentLike[] = [];
+    let startAt = 0;
+    const pageSize = 100;
+    while (true) {
+      const d = (await this.req(
+        'GET',
+        `/rest/api/3/issue/${encodeURIComponent(key)}/comment?startAt=${startAt}&maxResults=${pageSize}`,
+      )) as {
+        comments?: Array<{
+          id: string;
+          author?: { accountId?: string } | null;
+          body?: unknown;
+          reactions?: Array<{ emoji?: string; author?: { accountId?: string } | null }>;
+        }>;
+        total?: number;
       };
-    });
+      for (const c of d.comments ?? []) {
+        const bodyText = adfToPlainText(c.body);
+        const reactions: Reaction[] = [];
+        for (const r of c.reactions ?? []) {
+          const emoji = r.emoji ?? '';
+          if (!emoji) continue;
+          reactions.push({ emoji, isAi: c.author?.accountId === aiAccountId });
+        }
+        all.push({
+          body: bodyText,
+          isAi: c.author?.accountId === aiAccountId || isAiMarked(bodyText),
+          reactions,
+        });
+      }
+      const fetched = (d.comments ?? []).length;
+      if (fetched < pageSize || all.length >= maxResults) break;
+      startAt += fetched;
+    }
+    return all;
   }
 
   /** JQL search returning issue objects with `key` (and optional extra fields). */

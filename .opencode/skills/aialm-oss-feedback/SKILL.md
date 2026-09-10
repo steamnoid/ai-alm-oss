@@ -39,7 +39,12 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
 /aialm-oss-feedback AIALMOSS-N
 ```
 
-## Flow
+## Flow — PR poller is step 0
+
+0. **PR merged/closed poll:** Derive `head` from the ticket's `prUrl` comment (`paligakrzychu:aialm/<waveKey>` → `owner:branch` + `baseOwner/baseRepo` from `prUrl`). Call `GithubClient.getPull(baseOwner, baseRepo, head)` (read-only, public, no extra scope). 
+   - `merged==true` → post `[AI-generated] Feedback — PR #N merged at <merged_at> → DONE`, then `IN_PROGRESS_BY_AGENT → DONE` (`AIALM STAGE=DONE`, `ROLE` null, `AGENT=none` + native `Done`). Stop — do not classify review comments as deltas (the delivery is closed). When `verify` was `NOT READY_FOR_PR`, do NOT auto-close — instead stay `AWAITING_HUMAN_APPROVAL` with `BLOCKED: verify not READY_FOR_PR`.
+   - `state==closed && !merged` → post `PR #N closed without merge at <closed_at> — feedback cycle`, `IN_PROGRESS_BY_AGENT → AWAITING_HUMAN_APPROVAL` (`ROLE=PO`, `AGENT=none`), then continue to classify the close reason.
+   - `state==open` → continue to review classification.
 
 1. Fetch PR review comments via the adapter (PullRequestTrace → prUrl).
 2. Classify each comment:
@@ -87,5 +92,5 @@ MUST NOT: post to GitHub, modify code/tests directly, change ALM item states.
 Closed loop: corrections → verify → updated commits on the existing PR (via the
 oss-pr idempotent path).
 
-## V1.2 — fetch + classify + access-grant
-`fetchPrReviewComments(gh, owner, repo, prNumber)` retrieves PR review comments via the adapter; `classifyReviewComment` → category/disposition/needsApproval. GitHub access-grant (invite + Viewer role) and revoke are governance actions: proposed (`accessGrantComment`) and executed by the agent ONLY after human approval — never automatic.
+## V1.2 — fetch + classify + access-grant + PR poller
+`GithubClient.getPull(baseOwner, baseRepo, head)` and `getPullByNumber` power the PR `merged`/`closed` poll (no `gh` CLI, uses `GITHUB_TOKEN` from `.env` via `dispatcher --env-file`; public `GET` works unauthenticated at 60 req/h). `fetchPrReviewComments(gh, owner, repo, prNumber)` retrieves PR review comments via the adapter; `classifyReviewComment` → category/disposition/needsApproval. GitHub access-grant (invite + Viewer role) and revoke are governance actions: proposed (`accessGrantComment`) and executed by the agent ONLY after human approval — never automatic. **PR merged → `DONE` is automatic only when `verify` was `READY_FOR_PR`; otherwise `AWAITING_HUMAN_APPROVAL` with `BLOCKED` (no silent close on NOT READY).**

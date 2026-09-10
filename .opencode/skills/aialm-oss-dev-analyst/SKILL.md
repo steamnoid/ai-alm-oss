@@ -46,9 +46,18 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
   on that target; continue the others.
 - No children → analyze the single target when it has both.
 
-## Input assembly
+## Input assembly — source of truth (description OR approved comments)
 
-- Target description + comments; Product AC section; GENERATED QA scenarios (metadata).
+- Per target: description **AND** comments (each child independently —
+  `comment_limit:200` or paginate; do not stop at the first 100). Product AC
+  section; GENERATED QA scenarios (metadata).
+- **Comments are as valid as the description.** If `## Product AC` / `## GENERATED QA`
+  are missing from the description, derive them from approved proposal comments:
+  `aialm-oss-po-analyze:<id>` / `aialm-oss-qa-analyze:<id>` with footer
+  `proposal:<id>` + human approval (`✅`/`👍` reaction, `APPROVE:<id>`/`LGTM`, or
+  a standalone `✅`/`👍` comment appearing after the proposal). Skip unapproved
+  proposals. Only BLOCKED when neither the description section nor an approved
+  comment proposal is present.
 - Project AI Profile conventions (coding/testing conventions, structure, CI
   commands) constrain which seams are acceptable in THIS repository.
 - Existing codebase is context only — never the requirement.

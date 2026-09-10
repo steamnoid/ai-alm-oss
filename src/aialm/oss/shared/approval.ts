@@ -34,6 +34,13 @@ export function containsExplicitApproval(body: string | null | undefined, id: st
 /**
  * Decyzja o akceptacji propozycji o danym id. `comments` = wszystkie komentarze
  * w wątku (AI i human), `reactions` na komentarzu. NotFound → false.
+ *
+ * ZatwierdzoneIFF:
+ *  - ludzka reakcja ✅/👍 NA komentarzu AI niosącym `proposal:<id>`;
+ *  - ludzki komentarz z ciałem `APPROVE:<id>`/LGTM+id;
+ *  - ludzki komentarz-wstawka z samym emoji ✅/👍 (bez `proposal:<id>`) —
+ *    zatwierdza **najbliższą poprzedzającą** propozycję AI w wątku
+ *    (komentarze jako źródło prawdy), jeżeli ta niesie `proposal:<id>`.
  */
 export function hasHumanApprovalFor(
   comments: readonly CommentLike[],
@@ -42,28 +49,37 @@ export function hasHumanApprovalFor(
 ): boolean {
   const gating = opts?.gatingEmojis ?? ['✅', '👍'];
 
+  // (A) Jawne APPROVE:<id>/LGTM+id w ciele dowolnego ludzkiego komentarza,
+  //     oraz ludzka reakcja gating na komentarzu niosącym ten proposal:<id>.
   for (const c of comments) {
-    // W dev AI i human dzielą konto — tylko strict AI (isAi + AI-mark) to proposal AI.
-    // Komentarz isAi ale bez AI-mark (np. "APPROVE:872f..." od shared account) traktuj jako human.
-    const isStrictAi = c.isAi && isAiMarked(c.body);
-    if (isStrictAi) {
-      // Reakcja human na KOMENTARZU AI: ludzka reakcja na komentarzu, który
-      // niesie proposal:<id>, jest aprobatą (kanał akceptacji). Samo ciało
-      // komentarza AI nigdy nie zatwierdza.
-      if (c.body?.includes(`proposal:${id}`) && c.reactions?.some(r => !r.isAi && gating.includes(r.emoji))) {
-        return true;
-      }
-      continue;
-    }
-
     if (containsExplicitApproval(c.body, id)) return true;
+    if (c.reactions?.some(r => !r.isAi && gating.includes(r.emoji)) &&
+        c.body?.includes(`proposal:${id}`)) return true;
+  }
 
-    // Reakcja human na komentarzu (nie AI).
-    if (c.reactions?.some(r => !r.isAi && gating.includes(r.emoji))) {
-      // Reakcja zatwierdza propozycję TYLKO jeśli komentarz niesie ten proposal:<id>.
-      if (c.body && c.body.includes(`proposal:${id}`)) return true;
+  // Znajdź ostatni (najpóźniejszy) komentarz AI niosący ten proposal:<id>.
+  let lastProp = -1;
+  for (let i = 0; i < comments.length; i++) {
+    const c = comments[i]!;
+    if (c.isAi && isAiMarked(c.body) && c.body?.includes(`proposal:${id}`)) {
+      lastProp = i;
     }
   }
+  if (lastProp === -1) return false;
+
+  // (B) Reakcja human (✅/👍) bezpośrednio na komentarzu AI z tym proposal:<id>.
+  if (comments[lastProp]!.reactions?.some(r => !r.isAi && gating.includes(r.emoji))) return true;
+
+  // (C) Komentarze jako źródło prawdy — ludzka wstawka `✅`/`👍` (body-emotka,
+  //     osobny komentarz bez proposal:<id>) PO pozycji propozycji zatwierdza ją.
+  for (let i = lastProp + 1; i < comments.length; i++) {
+    const cc = comments[i]!;
+    const t = cc.body ?? '';
+    if (!cc.isAi && gating.some(e => t.includes(e)) && !/^\[AI-generated\]/i.test(t.trim())) {
+      return true;
+    }
+  }
+
   return false;
 }
 

@@ -38,13 +38,42 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
 /aialm-oss-dev-impl AIALMOSS-N
 ```
 
-## Input
+## Input — source of truth (description OR approved comments)
 
+Product AC, GENERATED QA and Implementation Contract are canonical when batched
+into the target description (`## Product AC` / `## GENERATED QA` /
+`## Implementation Contract`). **But approved proposal comments are an equally
+valid source of truth** — the skills also read from comments, so a missing
+description section does **not** mean the input is absent.
+
+Resolve the effective spec for each target in this order:
+
+0. **Recognizing human approval (comments as source of truth).** A proposal is
+   human-approved if **any** of these holds:
+   - a human `✅`/`👍` reaction on the proposal comment, or
+   - a human comment containing `APPROVE:<id>` / `LGTM <id>` (even as a separate
+     comment), or
+   - a standalone human comment whose body is just `✅` / `👍` appearing **after**
+     the proposal in the thread. A `✅`/`👍` that appears *before* the proposal
+     does not count for it.
+   Unapproved proposals are skipped.
+
+- **Product AC**: prefer the `## Product AC` block in the target description;
+  else derive from approved `aialm-oss-po-analyze` / `aialm-oss-po-update-approved`
+  proposal comments (header `aialm-oss-po-analyze:<id>`, footer `proposal:<id>`,
+  human-approved).
+- **GENERATED QA** (intent alignment only): prefer the `## GENERATED QA` block;
+  else derive from approved `QA Scenario Proposal` comments (header
+  `aialm-oss-qa-analyze:<id>`, footer `proposal:<id>`); skip unapproved deltas.
+- **Implementation Contract** (hooks when UI in scope): prefer the
+  `## Implementation Contract` block; else derive from approved
+  `Implementation Contract Proposal` comments (header `aialm-oss-dev-analyst:<id>`,
+  footer `proposal:<id>`). Approved `kind: LOCATOR`/`kind: UI-STATE`/`kind: DATA`
+  hooks are frozen for wiring.
+- Only **BLOCKED** for a target if **neither** the description section **nor** at
+  least one corresponding approved proposal comment is present.
 - Resolve target: parent with exclusive functional children → each
   independently; or a single child id.
-- Require per processed target: approved Product AC; non-empty GENERATED QA
-  (intent alignment only); non-empty Implementation Contract with hooks when UI
-  is in scope.
 - Coding style/structure/scripts from Project AI Profile; missing contract →
   BLOCKED for that target.
 
@@ -118,3 +147,29 @@ git -C .work/wellbeingt-5 push origin aialm/wellbeingt-5
 ```
 
 NEVER touch upstream `main` directly. Each wave works in its own `.work/<waveKey>/` clone so parallel waves never share a working copy. Model for all skills: `opencode/big-pickle`.
+
+## Verify feedback — intelligent code vs spec fix
+
+When the last `aialm-oss-verify` on `WELLBEINGT-5` is `NOT READY_FOR_PR` (e.g. `W13` Light `7f28` `Expected rgb(248,250,252) Received rgb(207,210,215)`), `dev-impl` MUST read that `verify` summary from `W5` `comments` (`jira_jira_get_issue` `comment_limit:100` + `adfToPlainText`) and `W13` `GENERATED QA` from `W13` `description`, then call `shared/git-ops:parseVerifyFailure(verifyBody, qaBody)` to decide `fixTarget: code|spec`. `code` → patch `web-app/src/app/layout.tsx:21` (remove `transition-colors`); `spec` → propose delta `aialm-oss-qa-analyze:<id>` on `W13` and wait for `APPROVE`. In both cases stay on same branch `aialm/wellbeingt-5` (rebased on `d009c2c`).
+
+## Docker E2E (DiD) — `docker build` / `docker run` verification
+
+Dev-impl E2E (AC `docker build .` + `curl http://localhost:3000`) requires a Docker daemon. By default the skill runs **without** `docker.sock` — use static fallback via `shared/git-ops` (`parseDockerfile` / `parseDockerignore` + `npm run build` typecheck) and classify `d4e5f6a7b8c9` as `DEFERRED_TO_HUMAN` with instruction:
+
+```
+⚠️ Docker daemon unavailable in this sandbox (no /var/run/docker.sock).
+Instrukcja dla człowieka: docker build -t test . && docker run -d -p 3000:3000 test && curl -f http://localhost:3000 && docker exec test npm ls better-sqlite3
+Potwierdź: APPROVE:d4e5f6a7b8c9
+```
+
+When the dispatcher is launched with `DISPATCH_WITH_DOCKER_SOCK=1`, it mounts the host `docker.sock` (`-v /var/run/docker.sock:/var/run/docker.sock` + `~/.docker/run/docker.sock` on macOS) and the image provides `docker` CLI (`docker.io` in `Dockerfile:base`). In that mode the skill SHOULD run the real E2E:
+
+```bash
+docker build -t wellbeing:$WAVE_KEY .work/$WAVE_KEY
+docker run -d --name wellbeing-$WAVE_KEY -p 3000:3000 wellbeing:$WAVE_KEY
+docker exec wellbeing-$WAVE_KEY npm ls better-sqlite3
+curl -f http://localhost:3000
+docker inspect --format='{{.State.Health.Status}}' wellbeing-$WAVE_KEY  # HEALTHCHECK
+```
+
+Probe availability with `shared/git-ops:dockerAvailable()` or `docker info`. If unavailable, use fallback; if available, run full E2E and classify `IMPLEMENTED` only on 200 + healthy.

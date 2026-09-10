@@ -41,7 +41,14 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
 
 ## Flow
 
-1. Resolve work item(s) + wave outputs (feature diff + test specs).
+1. Resolve work item(s) + wave outputs (feature diff + test specs). For each
+   target (parent and each functional child) read description **AND** comments
+   (paginate `comment_limit:200`; a child may exceed 100 comments). The effective
+   GENERATED QA = `## GENERATED QA` in description **or** approved `QA Scenario
+   Proposal` comments (header `aialm-oss-qa-analyze:<id>`, footer `proposal:<id>`,
+   human-approved by `✅`/`👍` reaction, `APPROVE:<id>`/`LGTM`, or a standalone
+   `✅`/`👍` comment appearing after the proposal). Map every approved CORE
+   scenario to a test traceability id.
 2. Load Profile.ciCommands (typecheck, lint, unit, integration, e2e).
 3. Execute commands in order; capture exit codes + logs as `EvidenceEntry[]`
    (via makeEvidence) — append-only, never hidden or silently retried.
@@ -80,3 +87,11 @@ A READY_FOR_PR verdict enables `/aialm-oss-pr`.
 
 ## V1.2 — executor + CI on PR
 `runValidation(Profile.ciCommands)` executes commands via bash and returns EvidenceEntry[] (exit codes + output; result pass|fail|error) — no success claimed without real evidence. PR Actions (`pull_request`) is complementary evidence; READY_FOR_PR only when all CORE green.
+
+## Docker E2E (DiD) + fallback
+
+Verify may need `docker build`/`docker run` for `WELLBEINGT-15` dockerization. By default no `docker.sock`; use `shared/git-ops:dockerAvailable()` probe.
+
+- If `docker info` succeeds (dispatcher launched with `DISPATCH_WITH_DOCKER_SOCK=1` → `-v /var/run/docker.sock:/var/run/docker.sock` + image has `docker` CLI), run real E2E: `docker build -t verify:$WAVE .work/$WAVE && docker run -d --health-cmd "curl -f http://localhost:3000 || exit 1" verify:$WAVE && curl -f http://localhost:3000 && docker exec verify:$WAVE npm ls better-sqlite3`.
+
+- If `docker info` fails, use static fallback (`parseDockerfile`/`parseDockerignore` + `npm run build` typecheck) and classify docker-gated scenarios as `BLOCKED (needs human docker run)` with explicit instruction for human `APPROVE` after local `docker build/run`. Never claim E2E green without daemon evidence. Requires `external_directory` to allow `/tmp/*`, `/var/folders/*` (already in `opencode.json` and `dispatcher/correctedOpencodeConfig`).

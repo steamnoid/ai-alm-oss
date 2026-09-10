@@ -48,6 +48,16 @@ export interface IssueRef {
   created_at?: string;
 }
 
+export interface PullRef {
+  number: number;
+  state: 'open' | 'closed';
+  merged: boolean;
+  merged_at: string | null;
+  html_url: string;
+  head: { ref: string; sha: string; label: string };
+  base: { ref: string };
+}
+
 export class GithubClient {
   private static API = 'https://api.github.com';
   private readonly f: typeof fetch;
@@ -141,6 +151,23 @@ export class GithubClient {
       if (list.length < 50) break;
     }
     return out;
+  }
+
+  /** Fetch a single PR by head `owner:branch` (for feedback poller: merged/closed). */
+  async getPull(owner: string, repo: string, head: string): Promise<PullRef | undefined> {
+    const list = (
+      await this.req('GET', `/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(head)}&state=all&per_page=5`)
+    ).data as PullRef[];
+    if (Array.isArray(list) && list.length > 0) {
+      const exact = list.find(p => p.head.label === head);
+      return exact ?? list[0];
+    }
+    return undefined;
+  }
+
+  /** Direct lookup by PR number (fallback when head search is ambiguous). */
+  async getPullByNumber(owner: string, repo: string, number: number): Promise<PullRef> {
+    return (await this.req('GET', `/repos/${owner}/${repo}/pulls/${number}`)).data as PullRef;
   }
 
   /** Read `.github/workflows` text files and next the `run:` lines (CI commands). */

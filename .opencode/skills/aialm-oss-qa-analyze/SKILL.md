@@ -46,10 +46,16 @@ To mutate self-aware fields you need their project-correct custom-field ids (the
   continue the other targets.
 - No functional children: analyze the single target work item.
 
-## Input assembly
+## Input assembly — source of truth (description OR approved comments)
 
 Retrieve parent, comments, children, each child's description/comments, approved
-AC sections, existing QA proposals/reactions.
+AC sections, existing QA proposals/reactions. **Comments are as valid as the
+description**: if `## Product AC` is missing from a child's description, derive
+it from approved `aialm-oss-po-analyze:<id>` / `aialm-oss-po-update-approved:<id>`
+proposals (footer `proposal:<id>`, human-approved by `✅`/`👍` reaction,
+`APPROVE:<id>`/`LGTM`, or a standalone `✅`/`👍` comment after the proposal).
+Skip unapproved proposals. Paginate comments (`comment_limit:200`) so late `✅`
+approvals are not missed.
 
 ## QA Proposal model
 
@@ -94,6 +100,10 @@ Allow: retrieve, list children (client-side), comment list/create,
 reaction list (read).
 MUST NOT: modify description/state/labels, create work items, write or execute
 tests.
+
+## Verify feedback — delta SPEC on demand
+
+When `WELLBEINGT-5` last `aialm-oss-verify` on `W5` is `NOT READY_FOR_PR` and `W13` Light `7f28` failed due to SPEC mismatch (not code `transition-colors`), `qa-analyze` MUST read that `verify` summary from `W5` `comments` and `W13` `GENERATED QA` from `W13` `description`, then call `shared/git-ops:parseVerifyFailure(verifyBody, qaBody)` to decide `fixTarget=spec`. In that case propose delta `aialm-oss-qa-analyze:<newId>` on `W13` (`expect.poll`/`waitForTimeout` vs `toContain`) and wait for `APPROVE:<newId>` before `qa-impl` touches `aialm/wellbeingt-5`.
 
 ## Idempotency
 
